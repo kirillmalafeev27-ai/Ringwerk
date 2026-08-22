@@ -40,3 +40,9 @@ dev.*.log
 /.wrangler/
 /outputs/
 /work/
+
+# superseded local source renders (the shipped game uses compact WebP assets)
+/public/game-assets/*.png
+/public/og.png
+/public/assets/
+/public/licenses/SPINE-RUNTIMES-LICENSE.txt
