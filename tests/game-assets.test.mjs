@@ -7,7 +7,7 @@ async function readWebp(relativePath) {
   assert.equal(bytes.subarray(0, 4).toString("ascii"), "RIFF");
   assert.equal(bytes.subarray(8, 12).toString("ascii"), "WEBP");
   assert.ok(bytes.byteLength > 8_000, "asset should contain real image data");
-  assert.ok(bytes.byteLength < 55_000, "asset should stay within the web delivery budget");
+  assert.ok(bytes.byteLength < 18_500, "asset should stay within the web delivery budget");
   return bytes;
 }
 
@@ -43,5 +43,5 @@ test("asset documentation records the built-in generation workflow", async () =>
   assert.match(documentation, /terminal-core\.webp/);
   assert.match(documentation, /hazard-core\.webp/);
   assert.match(documentation, /public\/og\.webp/);
-  assert.match(documentation, /768 x 512/);
+  assert.match(documentation, /512 x 341/);
 });

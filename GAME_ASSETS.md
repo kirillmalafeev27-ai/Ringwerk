@@ -14,13 +14,13 @@ All five source raster assets were generated with the built-in `image_gen` mode.
 
 | Path | Size | Bytes | Color / alpha | Intended use |
 | --- | ---: | ---: | --- | --- |
-| `public/game-assets/arena-floor.webp` | 768 x 512 | 31,552 | RGB, opaque | Wide arena floor / void backdrop beneath code-rendered rings |
-| `public/game-assets/player-core.webp` | 256 x 234 | 19,154 | RGBA, transparent corners | Coral player runner-drone, facing upper-right |
-| `public/game-assets/terminal-core.webp` | 256 x 242 | 24,794 | RGBA, transparent corners | Neutral terminal body; draw A/B/C in code over the pale cyan core |
-| `public/game-assets/hazard-core.webp` | 256 x 234 | 27,780 | RGBA, transparent corners | Fixed red cutter / energy-emitter hazard |
-| `public/og.webp` | 768 x 512 | 34,376 | RGB, opaque | Bespoke social sharing card |
+| `public/game-assets/arena-floor.webp` | 512 x 341 | 16,160 | RGB, opaque | Wide arena floor / void backdrop beneath code-rendered rings |
+| `public/game-assets/player-core.webp` | 192 x 175 | 14,322 | RGBA, transparent corners | Coral player runner-drone, facing upper-right |
+| `public/game-assets/terminal-core.webp` | 192 x 182 | 16,326 | RGBA, transparent corners | Neutral terminal body; draw A/B/C in code over the pale cyan core |
+| `public/game-assets/hazard-core.webp` | 192 x 175 | 16,892 | RGBA, transparent corners | Fixed red cutter / energy-emitter hazard |
+| `public/og.webp` | 512 x 341 | 16,934 | RGB, opaque | Bespoke social sharing card |
 
-Visual QA was performed on the final WebP files at their shipped dimensions with `view_image`. Decode metadata and corner-alpha checks confirm that the three sprite files carry a genuine alpha channel; all four corner samples are alpha `0`. The arena and social card are intentionally opaque. Every shipped asset is below 35,000 bytes except none: all five meet the preferred threshold as well as the 55 KB hard maximum.
+Visual QA was performed on the final WebP files at their shipped dimensions with `view_image`. Decode metadata and corner-alpha checks confirm that the three sprite files carry a genuine alpha channel; all four corner samples are alpha `0`. The arena and social card are intentionally opaque. Every shipped asset is below the 18,000-byte source-hosting limit; all five land between 14,322 and 16,934 bytes.
 
 ## Final prompt specs
 
