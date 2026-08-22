@@ -1,0 +1,1483 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+const TAU = Math.PI * 2;
+const STEP_ANGLE = TAU / 18;
+const RING_NAMES = ["ВНЕШНИЙ", "СРЕДНИЙ", "ВНУТРЕННИЙ"] as const;
+const RING_COLORS = ["#35e0c1", "#47b8ff", "#f5d94e"] as const;
+
+type Phase = "briefing" | "playing" | "won" | "lost";
+type TerminalId = "A" | "B" | "C";
+type PlayerMode = "ring" | "spoke";
+type BonusId = "brake" | "reverse" | "overdrive" | "shift" | "blackout";
+type ActionId = "step-left" | "step-right" | "outer" | "inner" | "spoke";
+
+type Question = {
+  prompt: string;
+  options: [string, string, string];
+  correct: number;
+  rule: string;
+};
+
+type BonusDefinition = {
+  id: BonusId;
+  name: string;
+  mark: string;
+  effect: string;
+  cost: string;
+  color: string;
+};
+
+type StoredBonus = { id: BonusId; level: 1 | 2 };
+
+type Particle = {
+  angle: number;
+  ring: number;
+  radial: number;
+  life: number;
+  maxLife: number;
+  size: number;
+  color: string;
+  angularSpeed: number;
+  radialSpeed: number;
+};
+
+type RingState = {
+  angle: number;
+  baseSpeed: number;
+  permanentScale: number;
+  permanentDirection: number;
+  temporaryMultiplier: number;
+  temporaryUntil: number;
+  reversedUntil: number;
+  frozenUntil: number;
+};
+
+type WorldState = {
+  rings: RingState[];
+  player: {
+    ringIndex: number;
+    localAngle: number;
+    mode: PlayerMode;
+    spokeIndex: number;
+    health: number;
+    invulnerableUntil: number;
+  };
+  terminals: Record<TerminalId, boolean>;
+  elapsed: number;
+  phaseTime: number;
+  spokeAngle: number;
+  spokeSpeed: number;
+  spokeCount: number;
+  spokeCharge: number;
+  hazardsDisabledUntil: number;
+  sawDisabled: boolean;
+  particles: Particle[];
+  shake: number;
+  flash: number;
+  score: number;
+  correct: number;
+  wrong: number;
+};
+
+type HudSnapshot = {
+  time: number;
+  health: number;
+  ringIndex: number;
+  mode: PlayerMode;
+  charge: number;
+  terminals: Record<TerminalId, boolean>;
+  speeds: number[];
+  threat: { label: string; seconds: number } | null;
+  nearSpoke: boolean;
+  score: number;
+  correct: number;
+  wrong: number;
+};
+
+type AssetSet = {
+  floor?: HTMLImageElement;
+  player?: HTMLImageElement;
+  terminal?: HTMLImageElement;
+  hazard?: HTMLImageElement;
+};
+
+const QUESTIONS: Question[] = [
+  { prompt: "Ich gehe ___ Maschinenraum.", options: ["in den", "im", "in dem"], correct: 0, rule: "Wohin? → Akkusativ" },
+  { prompt: "Der Kern liegt ___ Zentrum.", options: ["ins", "im", "in das"], correct: 1, rule: "Wo? → Dativ" },
+  { prompt: "Wir hängen das Kabel ___ Wand.", options: ["an die", "an der", "an den"], correct: 0, rule: "Wohin? → Akkusativ" },
+  { prompt: "Das Kabel hängt ___ Wand.", options: ["an die", "an der", "auf die"], correct: 1, rule: "Wo? → Dativ" },
+  { prompt: "Sie läuft ___ Brücke.", options: ["über die", "über der", "über dem"], correct: 0, rule: "Wohin? → Akkusativ" },
+  { prompt: "Sie wartet ___ Brücke.", options: ["auf die", "auf der", "an den"], correct: 1, rule: "Wo? → Dativ" },
+  { prompt: "Der Techniker stellt die Kiste ___ Terminal.", options: ["neben das", "neben dem", "am"], correct: 0, rule: "Wohin? → Akkusativ" },
+  { prompt: "Die Kiste steht ___ Terminal.", options: ["neben das", "neben dem", "ins"], correct: 1, rule: "Wo? → Dativ" },
+  { prompt: "Wir fahren ___ äußeren Ring.", options: ["auf den", "auf dem", "an der"], correct: 0, rule: "Wohin? → Akkusativ" },
+  { prompt: "Der Läufer ist ___ mittleren Ring.", options: ["auf dem", "auf den", "in den"], correct: 0, rule: "Wo? → Dativ" },
+  { prompt: "Ich lege den Schlüssel ___ Konsole.", options: ["auf die", "auf der", "unter dem"], correct: 0, rule: "Wohin? → Akkusativ" },
+  { prompt: "Der Schlüssel liegt ___ Konsole.", options: ["auf die", "auf der", "an die"], correct: 1, rule: "Wo? → Dativ" },
+];
+
+const BONUSES: Record<BonusId, BonusDefinition> = {
+  brake: { id: "brake", name: "ТОРМОЗ", mark: "Ⅱ", effect: "Твоё кольцо ×0.45", cost: "соседнее ×1.45", color: "#35e0c1" },
+  reverse: { id: "reverse", name: "РЕВЕРС", mark: "↺", effect: "Разворот на 6 сек", cost: "маршрут тоже меняется", color: "#a98cff" },
+  overdrive: { id: "overdrive", name: "ФОРСАЖ", mark: "»", effect: "Твоё кольцо ×1.75", cost: "опасности ближе", color: "#f5d94e" },
+  shift: { id: "shift", name: "СДВИГ", mark: "+", effect: "Рывок кольца на 40°", cost: "вся геометрия сдвинется", color: "#ff9d4a" },
+  blackout: { id: "blackout", name: "ГЛУШИЛКА", mark: "×", effect: "Ловушки выкл. 6 сек", cost: "все кольца ×1.28", color: "#ff6b6b" },
+};
+
+const TERMINALS: Array<{
+  id: TerminalId;
+  ring: number;
+  localAngle: number;
+  color: string;
+  name: string;
+  effect: string;
+  cost: string;
+}> = [
+  { id: "A", ring: 0, localAngle: -2.18, color: "#35e0c1", name: "ПИТАНИЕ", effect: "+12 секунд", cost: "кольца быстрее" },
+  { id: "B", ring: 1, localAngle: 0.72, color: "#47b8ff", name: "РОТОР", effect: "спицы медленнее", cost: "одна спица отключится" },
+  { id: "C", ring: 2, localAngle: 2.58, color: "#f5d94e", name: "ЗАЩИТА", effect: "пила отключится", cost: "кольца развернутся" },
+];
+
+const HAZARDS = [
+  { id: "saw", label: "ПИЛА", angle: -Math.PI / 2, rings: [0, 1], width: 0.1, color: "#ff5f45" },
+  { id: "arc", label: "ДУГА", angle: 2.52, rings: [1, 2], width: 0.095, color: "#ffb347" },
+  { id: "press", label: "ПРЕСС", angle: 0.13, rings: [0, 1, 2], width: 0.075, color: "#ff3d70" },
+] as const;
+
+function normalizeAngle(value: number) {
+  let angle = value % TAU;
+  if (angle > Math.PI) angle -= TAU;
+  if (angle < -Math.PI) angle += TAU;
+  return angle;
+}
+
+function angleDistance(a: number, b: number) {
+  return Math.abs(normalizeAngle(a - b));
+}
+
+function directedDistance(from: number, to: number, direction: number) {
+  const clockwise = ((to - from) % TAU + TAU) % TAU;
+  return direction >= 0 ? clockwise : (TAU - clockwise) % TAU;
+}
+
+function createWorld(): WorldState {
+  return {
+    rings: [
+      { angle: 0.4, baseSpeed: 0.16, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
+      { angle: -0.8, baseSpeed: -0.21, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
+      { angle: 1.2, baseSpeed: 0.28, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
+    ],
+    player: { ringIndex: 1, localAngle: 2.8, mode: "ring", spokeIndex: 0, health: 3, invulnerableUntil: 12 },
+    terminals: { A: false, B: false, C: false },
+    elapsed: 0,
+    phaseTime: 90,
+    spokeAngle: 1.02,
+    spokeSpeed: 0.24,
+    spokeCount: 3,
+    spokeCharge: 0,
+    hazardsDisabledUntil: 0,
+    sawDisabled: false,
+    particles: [],
+    shake: 0,
+    flash: 0,
+    score: 0,
+    correct: 0,
+    wrong: 0,
+  };
+}
+
+function getRingSpeed(world: WorldState, index: number) {
+  const ring = world.rings[index];
+  if (world.elapsed < ring.frozenUntil) return 0;
+  const temporary = world.elapsed < ring.temporaryUntil ? ring.temporaryMultiplier : 1;
+  const reversed = world.elapsed < ring.reversedUntil ? -1 : 1;
+  return ring.baseSpeed * ring.permanentScale * ring.permanentDirection * temporary * reversed;
+}
+
+function getSpokeAngle(world: WorldState, index: number) {
+  return normalizeAngle(world.spokeAngle + (TAU / world.spokeCount) * index);
+}
+
+function getPlayerWorldAngle(world: WorldState) {
+  if (world.player.mode === "spoke") {
+    return getSpokeAngle(world, Math.min(world.player.spokeIndex, world.spokeCount - 1));
+  }
+  return normalizeAngle(world.rings[world.player.ringIndex].angle + world.player.localAngle);
+}
+
+function nearestSpoke(world: WorldState) {
+  const playerAngle = getPlayerWorldAngle(world);
+  let best = { index: 0, distance: Infinity };
+  for (let index = 0; index < world.spokeCount; index += 1) {
+    const distance = angleDistance(playerAngle, getSpokeAngle(world, index));
+    if (distance < best.distance) best = { index, distance };
+  }
+  return best;
+}
+
+function isHazardActive(world: WorldState, hazardId: string) {
+  if (world.elapsed < world.hazardsDisabledUntil) return false;
+  if (hazardId === "saw" && world.sawDisabled) return false;
+  if (hazardId === "press") return Math.sin(world.elapsed * 2.15) > -0.15;
+  return true;
+}
+
+function getThreat(world: WorldState) {
+  const ringIndex = world.player.ringIndex;
+  const playerAngle = getPlayerWorldAngle(world);
+  const speed = world.player.mode === "spoke" ? world.spokeSpeed : getRingSpeed(world, ringIndex);
+  if (Math.abs(speed) < 0.01) return null;
+  let best: { label: string; seconds: number } | null = null;
+  for (const hazard of HAZARDS) {
+    if (!hazard.rings.includes(ringIndex as never) || !isHazardActive(world, hazard.id)) continue;
+    const seconds = directedDistance(playerAngle, hazard.angle, speed) / Math.abs(speed);
+    if (seconds < 24 && (!best || seconds < best.seconds)) best = { label: hazard.label, seconds };
+  }
+  return best;
+}
+
+function snapshotWorld(world: WorldState): HudSnapshot {
+  return {
+    time: world.phaseTime,
+    health: world.player.health,
+    ringIndex: world.player.ringIndex,
+    mode: world.player.mode,
+    charge: world.spokeCharge,
+    terminals: { ...world.terminals },
+    speeds: world.rings.map((_, index) => Math.round((getRingSpeed(world, index) * 180) / Math.PI)),
+    threat: getThreat(world),
+    nearSpoke: world.player.mode === "spoke" || nearestSpoke(world).distance < 0.2,
+    score: world.score,
+    correct: world.correct,
+    wrong: world.wrong,
+  };
+}
+
+function polar(cx: number, cy: number, radius: number, angle: number) {
+  return { x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+}
+
+function drawSprite(
+  context: CanvasRenderingContext2D,
+  image: HTMLImageElement | undefined,
+  x: number,
+  y: number,
+  size: number,
+  rotation = 0,
+  alpha = 1,
+) {
+  if (!image?.complete || image.naturalWidth === 0) return false;
+  context.save();
+  context.translate(x, y);
+  context.rotate(rotation);
+  context.globalAlpha = alpha;
+  const ratio = image.naturalWidth / image.naturalHeight;
+  const width = ratio >= 1 ? size : size * ratio;
+  const height = ratio >= 1 ? size / ratio : size;
+  context.drawImage(image, -width / 2, -height / 2, width, height);
+  context.restore();
+  return true;
+}
+
+function drawArena(canvas: HTMLCanvasElement, world: WorldState, assets: AssetSet) {
+  const rect = canvas.getBoundingClientRect();
+  const density = Math.min(window.devicePixelRatio || 1, 2);
+  const width = Math.max(1, Math.round(rect.width * density));
+  const height = Math.max(1, Math.round(rect.height * density));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const context = canvas.getContext("2d");
+  if (!context) return;
+  context.setTransform(density, 0, 0, density, 0, 0);
+  const viewWidth = rect.width;
+  const viewHeight = rect.height;
+  context.clearRect(0, 0, viewWidth, viewHeight);
+
+  if (assets.floor?.complete) {
+    const imageRatio = assets.floor.naturalWidth / assets.floor.naturalHeight;
+    const viewRatio = viewWidth / viewHeight;
+    const sourceWidth = imageRatio > viewRatio ? assets.floor.naturalHeight * viewRatio : assets.floor.naturalWidth;
+    const sourceHeight = imageRatio > viewRatio ? assets.floor.naturalHeight : assets.floor.naturalWidth / viewRatio;
+    context.globalAlpha = 0.72;
+    context.drawImage(
+      assets.floor,
+      (assets.floor.naturalWidth - sourceWidth) / 2,
+      (assets.floor.naturalHeight - sourceHeight) / 2,
+      sourceWidth,
+      sourceHeight,
+      0,
+      0,
+      viewWidth,
+      viewHeight,
+    );
+    context.globalAlpha = 1;
+  } else {
+    const gradient = context.createRadialGradient(viewWidth * 0.5, viewHeight * 0.48, 10, viewWidth * 0.5, viewHeight * 0.48, Math.max(viewWidth, viewHeight) * 0.7);
+    gradient.addColorStop(0, "#15332f");
+    gradient.addColorStop(0.55, "#091715");
+    gradient.addColorStop(1, "#030908");
+    context.fillStyle = gradient;
+    context.fillRect(0, 0, viewWidth, viewHeight);
+  }
+  context.fillStyle = "rgba(1, 8, 7, 0.32)";
+  context.fillRect(0, 0, viewWidth, viewHeight);
+
+  const cx = viewWidth * 0.5 + (world.shake > 0 ? (Math.random() - 0.5) * world.shake : 0);
+  const cy = viewHeight * 0.5 + (world.shake > 0 ? (Math.random() - 0.5) * world.shake : 0);
+  const maxRadius = Math.min(viewWidth, viewHeight) * 0.425;
+  const radii = [maxRadius * 0.84, maxRadius * 0.59, maxRadius * 0.34];
+  const laneWidth = Math.max(25, maxRadius * 0.14);
+
+  context.save();
+  context.translate(cx, cy);
+  context.strokeStyle = "rgba(127, 255, 231, 0.035)";
+  context.lineWidth = 1;
+  for (let radius = 30; radius < maxRadius * 1.15; radius += 32) {
+    context.beginPath();
+    context.arc(0, 0, radius, 0, TAU);
+    context.stroke();
+  }
+  for (let index = 0; index < 16; index += 1) {
+    const angle = (TAU / 16) * index;
+    context.beginPath();
+    context.moveTo(Math.cos(angle) * 20, Math.sin(angle) * 20);
+    context.lineTo(Math.cos(angle) * maxRadius * 1.18, Math.sin(angle) * maxRadius * 1.18);
+    context.stroke();
+  }
+  context.restore();
+
+  for (let ringIndex = 0; ringIndex < 3; ringIndex += 1) {
+    const radius = radii[ringIndex];
+    const color = RING_COLORS[ringIndex];
+    const ring = world.rings[ringIndex];
+    context.save();
+    context.shadowColor = color;
+    context.shadowBlur = 13;
+    context.strokeStyle = "rgba(2, 11, 10, 0.96)";
+    context.lineWidth = laneWidth + 9;
+    context.beginPath();
+    context.arc(cx, cy, radius, 0, TAU);
+    context.stroke();
+    context.shadowBlur = 0;
+    context.strokeStyle = color + "42";
+    context.lineWidth = laneWidth;
+    context.beginPath();
+    context.arc(cx, cy, radius, 0, TAU);
+    context.stroke();
+    context.strokeStyle = color + "b8";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(cx, cy, radius - laneWidth / 2, 0, TAU);
+    context.stroke();
+    context.beginPath();
+    context.arc(cx, cy, radius + laneWidth / 2, 0, TAU);
+    context.stroke();
+    for (let tick = 0; tick < 24; tick += 1) {
+      const angle = ring.angle + (TAU / 24) * tick;
+      const outer = polar(cx, cy, radius + laneWidth * 0.28, angle);
+      const inner = polar(cx, cy, radius - laneWidth * 0.28, angle);
+      context.strokeStyle = tick % 4 === 0 ? color + "a8" : "rgba(235, 255, 247, 0.13)";
+      context.lineWidth = tick % 4 === 0 ? 3 : 1;
+      context.beginPath();
+      context.moveTo(inner.x, inner.y);
+      context.lineTo(outer.x, outer.y);
+      context.stroke();
+    }
+    const speed = getRingSpeed(world, ringIndex);
+    for (let marker = 0; marker < 3; marker += 1) {
+      const angle = ring.angle + marker * (TAU / 3);
+      const point = polar(cx, cy, radius, angle);
+      context.save();
+      context.translate(point.x, point.y);
+      context.rotate(angle + (speed >= 0 ? Math.PI / 2 : -Math.PI / 2));
+      context.fillStyle = color;
+      context.beginPath();
+      context.moveTo(8, 0);
+      context.lineTo(-5, -5);
+      context.lineTo(-5, 5);
+      context.closePath();
+      context.fill();
+      context.restore();
+    }
+    context.restore();
+  }
+
+  context.save();
+  context.globalCompositeOperation = "screen";
+  for (let spokeIndex = 0; spokeIndex < world.spokeCount; spokeIndex += 1) {
+    const angle = getSpokeAngle(world, spokeIndex);
+    const start = polar(cx, cy, maxRadius * 0.16, angle);
+    const end = polar(cx, cy, radii[0] + laneWidth * 0.55, angle);
+    const gradient = context.createLinearGradient(start.x, start.y, end.x, end.y);
+    gradient.addColorStop(0, "rgba(53, 224, 193, 0.08)");
+    gradient.addColorStop(0.55, "rgba(114, 255, 231, 0.72)");
+    gradient.addColorStop(1, "rgba(71, 184, 255, 0.12)");
+    context.strokeStyle = gradient;
+    context.lineWidth = 5;
+    context.shadowColor = "#35e0c1";
+    context.shadowBlur = 10;
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
+    context.shadowBlur = 0;
+    for (const radius of radii) {
+      const node = polar(cx, cy, radius, angle);
+      context.fillStyle = "#eafff8";
+      context.beginPath();
+      context.arc(node.x, node.y, 4, 0, TAU);
+      context.fill();
+    }
+  }
+  context.restore();
+
+  for (const hazard of HAZARDS) {
+    const active = isHazardActive(world, hazard.id);
+    const innerRadius = Math.min(...hazard.rings.map((index) => radii[index])) - laneWidth * 0.65;
+    const outerRadius = Math.max(...hazard.rings.map((index) => radii[index])) + laneWidth * 0.65;
+    context.save();
+    context.globalAlpha = active ? 0.82 : 0.22;
+    context.strokeStyle = hazard.color;
+    context.lineWidth = 3;
+    context.shadowColor = hazard.color;
+    context.shadowBlur = active ? 17 : 0;
+    const start = polar(cx, cy, innerRadius, hazard.angle);
+    const end = polar(cx, cy, outerRadius, hazard.angle);
+    context.beginPath();
+    context.moveTo(start.x, start.y);
+    context.lineTo(end.x, end.y);
+    context.stroke();
+    for (const ringIndex of hazard.rings) {
+      const point = polar(cx, cy, radii[ringIndex], hazard.angle);
+      context.fillStyle = active ? hazard.color : "#6d7774";
+      context.beginPath();
+      context.arc(point.x, point.y, active ? 7 : 4, 0, TAU);
+      context.fill();
+    }
+    const iconPoint = polar(cx, cy, outerRadius + 22, hazard.angle);
+    if (hazard.id === "saw") {
+      if (!drawSprite(context, assets.hazard, iconPoint.x, iconPoint.y, 64, world.elapsed * 1.4, active ? 0.95 : 0.3)) {
+        context.fillStyle = hazard.color;
+        context.beginPath();
+        context.arc(iconPoint.x, iconPoint.y, 18, 0, TAU);
+        context.fill();
+      }
+    } else {
+      context.fillStyle = "rgba(3, 10, 9, 0.92)";
+      context.strokeStyle = hazard.color;
+      context.lineWidth = 1;
+      context.beginPath();
+      context.arc(iconPoint.x, iconPoint.y, 18, 0, TAU);
+      context.fill();
+      context.stroke();
+      context.fillStyle = active ? "#fff8e7" : "#75827f";
+      context.font = "800 9px Inter, sans-serif";
+      context.textAlign = "center";
+      context.textBaseline = "middle";
+      context.fillText(hazard.label, iconPoint.x, iconPoint.y);
+    }
+    context.restore();
+  }
+
+  for (const terminal of TERMINALS) {
+    const angle = normalizeAngle(world.rings[terminal.ring].angle + terminal.localAngle);
+    const point = polar(cx, cy, radii[terminal.ring], angle);
+    const active = world.terminals[terminal.id];
+    context.save();
+    context.shadowColor = terminal.color;
+    context.shadowBlur = active ? 7 : 22;
+    context.globalAlpha = active ? 0.42 : 1;
+    if (!drawSprite(context, assets.terminal, point.x, point.y, laneWidth * 1.85, angle + Math.PI / 2)) {
+      context.fillStyle = "#0c1d1b";
+      context.strokeStyle = terminal.color;
+      context.lineWidth = 3;
+      context.beginPath();
+      context.arc(point.x, point.y, laneWidth * 0.42, 0, TAU);
+      context.fill();
+      context.stroke();
+    }
+    context.shadowBlur = 0;
+    context.globalAlpha = 1;
+    context.fillStyle = active ? "#06100f" : terminal.color;
+    context.strokeStyle = active ? terminal.color : "#06100f";
+    context.lineWidth = 2;
+    context.beginPath();
+    context.arc(point.x, point.y, laneWidth * 0.25, 0, TAU);
+    context.fill();
+    context.stroke();
+    context.fillStyle = active ? terminal.color : "#06100f";
+    context.font = "950 " + Math.max(12, laneWidth * 0.34) + "px Inter, sans-serif";
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText(active ? "✓" : terminal.id, point.x, point.y + 0.5);
+    context.restore();
+  }
+
+  const terminalCount = Object.values(world.terminals).filter(Boolean).length;
+  context.save();
+  context.translate(cx, cy);
+  const portalPulse = 1 + Math.sin(world.elapsed * 4) * 0.08;
+  context.fillStyle = terminalCount === 3 ? "rgba(245, 217, 78, 0.18)" : "rgba(2, 10, 9, 0.82)";
+  context.strokeStyle = terminalCount === 3 ? "#f5d94e" : "rgba(126, 181, 170, 0.18)";
+  context.lineWidth = 3;
+  context.shadowColor = "#f5d94e";
+  context.shadowBlur = terminalCount === 3 ? 28 : 0;
+  context.beginPath();
+  context.arc(0, 0, maxRadius * 0.13 * portalPulse, 0, TAU);
+  context.fill();
+  context.stroke();
+  context.shadowBlur = 0;
+  context.fillStyle = terminalCount === 3 ? "#fff4a8" : "#506663";
+  context.font = "900 9px Inter, sans-serif";
+  context.textAlign = "center";
+  context.textBaseline = "middle";
+  context.fillText(terminalCount === 3 ? "ВЫХОД" : terminalCount + "/3", 0, 0);
+  context.restore();
+
+  const playerAngle = getPlayerWorldAngle(world);
+  const playerPoint = polar(cx, cy, radii[world.player.ringIndex], playerAngle);
+  const playerSpeed = world.player.mode === "spoke" ? world.spokeSpeed : getRingSpeed(world, world.player.ringIndex);
+  const blink = world.elapsed < world.player.invulnerableUntil && Math.floor(world.elapsed * 12) % 2 === 0;
+  if (!blink) {
+    context.save();
+    context.shadowColor = "#ff6b45";
+    context.shadowBlur = 20;
+    if (!drawSprite(context, assets.player, playerPoint.x, playerPoint.y, laneWidth * 1.55, playerAngle + (playerSpeed >= 0 ? 0.8 : -2.35))) {
+      context.translate(playerPoint.x, playerPoint.y);
+      context.rotate(playerAngle + (playerSpeed >= 0 ? Math.PI / 2 : -Math.PI / 2));
+      context.fillStyle = "#ff6b45";
+      context.beginPath();
+      context.moveTo(12, 0);
+      context.lineTo(-9, -8);
+      context.lineTo(-5, 0);
+      context.lineTo(-9, 8);
+      context.closePath();
+      context.fill();
+    }
+    context.restore();
+  }
+  if (world.player.mode === "spoke") {
+    context.save();
+    context.strokeStyle = "#fff8d4";
+    context.lineWidth = 2;
+    context.setLineDash([4, 5]);
+    context.beginPath();
+    context.arc(playerPoint.x, playerPoint.y, laneWidth * 0.6, 0, TAU);
+    context.stroke();
+    context.restore();
+  }
+  for (const particle of world.particles) {
+    const point = polar(cx, cy, radii[Math.max(0, Math.min(2, particle.ring))] + particle.radial, particle.angle);
+    context.globalAlpha = Math.max(0, particle.life / particle.maxLife);
+    context.fillStyle = particle.color;
+    context.beginPath();
+    context.arc(point.x, point.y, particle.size, 0, TAU);
+    context.fill();
+  }
+  context.globalAlpha = 1;
+  if (world.flash > 0) {
+    context.fillStyle = "rgba(255, 91, 62, " + Math.min(0.28, world.flash * 0.18) + ")";
+    context.fillRect(0, 0, viewWidth, viewHeight);
+  }
+}
+
+function spawnBurst(
+  world: WorldState,
+  color: string,
+  count = 14,
+  ring = world.player.ringIndex,
+  angle = getPlayerWorldAngle(world),
+) {
+  for (let index = 0; index < count; index += 1) {
+    world.particles.push({
+      angle: angle + (Math.random() - 0.5) * 0.18,
+      ring,
+      radial: (Math.random() - 0.5) * 12,
+      life: 0.65 + Math.random() * 0.55,
+      maxLife: 1.2,
+      size: 1.4 + Math.random() * 2.8,
+      color,
+      angularSpeed: (Math.random() - 0.5) * 0.42,
+      radialSpeed: (Math.random() - 0.5) * 28,
+    });
+  }
+}
+
+export default function Home() {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const worldRef = useRef<WorldState>(createWorld());
+  const phaseRef = useRef<Phase>("briefing");
+  const soundRef = useRef(true);
+  const assetsRef = useRef<AssetSet>({});
+  const audioRef = useRef<AudioContext | null>(null);
+  const inventoryRef = useRef<StoredBonus[]>([]);
+  const comboRef = useRef(0);
+  const resolutionRef = useRef({ action: false, bonus: false });
+  const callbacksRef = useRef<{
+    onTerminal: (id: TerminalId) => void;
+    onHit: (label: string) => void;
+    onLose: (reason: string) => void;
+  }>({
+    onTerminal: () => {},
+    onHit: () => {},
+    onLose: () => {},
+  });
+  const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const [phase, setPhase] = useState<Phase>("briefing");
+  const [hud, setHud] = useState<HudSnapshot>(() => snapshotWorld(createWorld()));
+  const [questionCursor, setQuestionCursor] = useState(0);
+  const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
+  const [resolution, setResolution] = useState({ action: false, bonus: false });
+  const [bonusDraft, setBonusDraft] = useState<BonusId[]>([]);
+  const [inventory, setInventory] = useState<StoredBonus[]>([]);
+  const [combo, setCombo] = useState(0);
+  const [bestCombo, setBestCombo] = useState(0);
+  const [banner, setBanner] = useState("");
+  const [lossReason, setLossReason] = useState("");
+  const [soundEnabled, setSoundEnabled] = useState(true);
+
+  const question = QUESTIONS[questionCursor % QUESTIONS.length];
+  const terminalCount = Object.values(hud.terminals).filter(Boolean).length;
+  const exitUnlocked = terminalCount === 3;
+
+  const setGamePhase = useCallback((next: Phase) => {
+    phaseRef.current = next;
+    setPhase(next);
+  }, []);
+
+  const playTone = useCallback(
+    (kind: "correct" | "wrong" | "move" | "bonus" | "terminal" | "hit" | "win") => {
+      if (!soundRef.current || typeof window === "undefined") return;
+      const AudioContextClass =
+        window.AudioContext ??
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioContextClass) return;
+      if (!audioRef.current) audioRef.current = new AudioContextClass();
+      const audio = audioRef.current;
+      if (audio.state === "suspended") void audio.resume();
+      const oscillator = audio.createOscillator();
+      const gain = audio.createGain();
+      const settings = {
+        correct: [620, 0.11, "triangle"],
+        wrong: [145, 0.16, "sawtooth"],
+        move: [280, 0.06, "square"],
+        bonus: [440, 0.12, "triangle"],
+        terminal: [760, 0.32, "sine"],
+        hit: [85, 0.22, "sawtooth"],
+        win: [920, 0.5, "triangle"],
+      } as const;
+      const [frequency, duration, type] = settings[kind];
+      oscillator.type = type;
+      oscillator.frequency.setValueAtTime(frequency, audio.currentTime);
+      if (kind === "terminal" || kind === "win") {
+        oscillator.frequency.exponentialRampToValueAtTime(frequency * 1.6, audio.currentTime + duration);
+      }
+      gain.gain.setValueAtTime(0.0001, audio.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.09, audio.currentTime + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, audio.currentTime + duration);
+      oscillator.connect(gain);
+      gain.connect(audio.destination);
+      oscillator.start();
+      oscillator.stop(audio.currentTime + duration + 0.02);
+    },
+    [],
+  );
+
+  const showBanner = useCallback((message: string) => {
+    setBanner(message);
+    if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+    bannerTimerRef.current = setTimeout(() => setBanner(""), 2300);
+  }, []);
+
+  const loseGame = useCallback(
+    (reason: string) => {
+      if (phaseRef.current !== "playing") return;
+      setLossReason(reason);
+      resolutionRef.current = { action: false, bonus: false };
+      setResolution({ action: false, bonus: false });
+      setBonusDraft([]);
+      setGamePhase("lost");
+      playTone("hit");
+    },
+    [playTone, setGamePhase],
+  );
+
+  const activateTerminal = useCallback(
+    (id: TerminalId) => {
+      const world = worldRef.current;
+      const count = Object.values(world.terminals).filter(Boolean).length;
+      if (count === 1) world.phaseTime = Math.max(world.phaseTime, 54);
+      if (count === 2) world.phaseTime = Math.max(world.phaseTime, 38);
+      if (count === 3) world.phaseTime = Math.max(world.phaseTime, 28);
+
+      if (id === "A") {
+        world.phaseTime += 12;
+        world.rings.forEach((ring) => { ring.permanentScale *= 1.14; });
+      }
+      if (id === "B") {
+        if (world.player.mode === "spoke" && world.player.spokeIndex === 2) {
+          const worldAngle = getPlayerWorldAngle(world);
+          world.player.mode = "ring";
+          world.player.localAngle = normalizeAngle(worldAngle - world.rings[world.player.ringIndex].angle);
+        }
+        world.spokeCount = 2;
+        world.spokeSpeed *= 0.72;
+        world.rings[1].permanentScale *= 0.78;
+        world.rings[0].permanentScale *= 1.16;
+      }
+      if (id === "C") {
+        world.sawDisabled = true;
+        world.rings.forEach((ring) => { ring.permanentDirection *= -1; });
+      }
+
+      world.score += 1000 + Math.round(world.phaseTime * 8);
+      const terminal = TERMINALS.find((item) => item.id === id)!;
+      spawnBurst(
+        world,
+        terminal.color,
+        28,
+        terminal.ring,
+        normalizeAngle(world.rings[terminal.ring].angle + terminal.localAngle),
+      );
+      playTone("terminal");
+      showBanner(
+        count === 3
+          ? "КОНТУР СОБРАН · ВЫХОД ОТКРЫТ"
+          : "УЗЕЛ " + id + ": " + terminal.effect + " · " + terminal.cost,
+      );
+    },
+    [playTone, showBanner],
+  );
+
+  const onHit = useCallback(
+    (label: string) => {
+      playTone("hit");
+      showBanner("УДАР: " + label + " · ЦЕЛОСТНОСТЬ −1");
+    },
+    [playTone, showBanner],
+  );
+
+  useEffect(() => {
+    callbacksRef.current = { onTerminal: activateTerminal, onHit, onLose: loseGame };
+  }, [activateTerminal, loseGame, onHit]);
+
+  useEffect(() => {
+    const load = (key: keyof AssetSet, source: string) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = source;
+      image.onload = () => { assetsRef.current[key] = image; };
+    };
+    load("floor", "/game-assets/arena-floor.webp");
+    load("player", "/game-assets/player-core.webp");
+    load("terminal", "/game-assets/terminal-core.webp");
+    load("hazard", "/game-assets/hazard-core.webp");
+  }, []);
+
+  useEffect(() => {
+    let animationFrame = 0;
+    let lastFrame = performance.now();
+    let lastHudUpdate = 0;
+
+    const frame = (now: number) => {
+      const world = worldRef.current;
+      const delta = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
+      lastFrame = now;
+
+      if (phaseRef.current === "playing") {
+        world.elapsed += delta;
+        world.phaseTime -= delta;
+        world.rings.forEach((ring, index) => {
+          ring.angle = normalizeAngle(ring.angle + getRingSpeed(world, index) * delta);
+        });
+        world.spokeAngle = normalizeAngle(world.spokeAngle + world.spokeSpeed * delta);
+        if (world.player.mode === "spoke") {
+          world.spokeCharge = Math.min(100, world.spokeCharge + delta * 8.5);
+        }
+
+        world.particles.forEach((particle) => {
+          particle.life -= delta;
+          particle.angle += particle.angularSpeed * delta;
+          particle.radial += particle.radialSpeed * delta;
+        });
+        world.particles = world.particles.filter((particle) => particle.life > 0);
+        world.shake = Math.max(0, world.shake - delta * 28);
+        world.flash = Math.max(0, world.flash - delta * 2.2);
+
+        for (const terminal of TERMINALS) {
+          if (world.terminals[terminal.id] || world.player.ringIndex !== terminal.ring) continue;
+          const terminalAngle = normalizeAngle(world.rings[terminal.ring].angle + terminal.localAngle);
+          if (angleDistance(getPlayerWorldAngle(world), terminalAngle) < 0.24) {
+            world.terminals[terminal.id] = true;
+            callbacksRef.current.onTerminal(terminal.id);
+          }
+        }
+
+        if (world.elapsed >= world.player.invulnerableUntil) {
+          const playerAngle = getPlayerWorldAngle(world);
+          for (const hazard of HAZARDS) {
+            if (!hazard.rings.includes(world.player.ringIndex as never) || !isHazardActive(world, hazard.id)) continue;
+            if (angleDistance(playerAngle, hazard.angle) < hazard.width) {
+              world.player.health -= 1;
+              world.player.invulnerableUntil = world.elapsed + 6;
+              world.shake = 13;
+              world.flash = 1;
+              const escapeDirection = getRingSpeed(world, world.player.ringIndex) >= 0 ? -1 : 1;
+              if (world.player.mode === "spoke") {
+                world.player.mode = "ring";
+                world.player.localAngle = normalizeAngle(
+                  playerAngle - world.rings[world.player.ringIndex].angle + escapeDirection * STEP_ANGLE * 3.4,
+                );
+              } else {
+                world.player.localAngle = normalizeAngle(
+                  world.player.localAngle + escapeDirection * STEP_ANGLE * 3.4,
+                );
+              }
+              spawnBurst(world, hazard.color, 24);
+              callbacksRef.current.onHit(hazard.label);
+              if (world.player.health <= 0) callbacksRef.current.onLose("Критическое повреждение бегунка.");
+              break;
+            }
+          }
+        }
+        if (world.phaseTime <= 0) {
+          world.phaseTime = 0;
+          callbacksRef.current.onLose("Контур разрядился раньше активации узла.");
+        }
+      } else {
+        world.shake = Math.max(0, world.shake - delta * 28);
+        world.flash = Math.max(0, world.flash - delta * 2.2);
+      }
+
+      if (canvasRef.current) drawArena(canvasRef.current, world, assetsRef.current);
+      if (now - lastHudUpdate > 100) {
+        lastHudUpdate = now;
+        setHud(snapshotWorld(world));
+      }
+      animationFrame = requestAnimationFrame(frame);
+    };
+
+    animationFrame = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(animationFrame);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (bannerTimerRef.current) clearTimeout(bannerTimerRef.current);
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+      void audioRef.current?.close();
+    },
+    [],
+  );
+
+  const resetTurn = useCallback(() => {
+    resolutionRef.current = { action: false, bonus: false };
+    setResolution({ action: false, bonus: false });
+    setFeedback(null);
+    setSelectedAnswer(null);
+    setBonusDraft([]);
+  }, []);
+
+  const startGame = useCallback(() => {
+    worldRef.current = createWorld();
+    setHud(snapshotWorld(worldRef.current));
+    inventoryRef.current = [];
+    setInventory([]);
+    comboRef.current = 0;
+    setCombo(0);
+    setBestCombo(0);
+    setQuestionCursor(0);
+    setLossReason("");
+    setBanner("");
+    resetTurn();
+    setGamePhase("playing");
+    playTone("move");
+  }, [playTone, resetTurn, setGamePhase]);
+
+  const completeResolutionPart = useCallback((part: "action" | "bonus") => {
+    const next = { ...resolutionRef.current, [part]: false };
+    resolutionRef.current = next;
+    setResolution(next);
+    if (!next.action && !next.bonus) {
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+      advanceTimerRef.current = setTimeout(() => {
+        if (phaseRef.current !== "playing") return;
+        setQuestionCursor((cursor) => cursor + 1);
+        setFeedback(null);
+        setSelectedAnswer(null);
+        setBonusDraft([]);
+      }, 260);
+    }
+  }, []);
+
+  const handleAnswer = useCallback(
+    (answerIndex: number) => {
+      if (
+        phaseRef.current !== "playing" ||
+        feedback !== null ||
+        resolutionRef.current.action ||
+        resolutionRef.current.bonus
+      ) return;
+      setSelectedAnswer(answerIndex);
+      const world = worldRef.current;
+      if (answerIndex === question.correct) {
+        const nextCombo = comboRef.current + 1;
+        comboRef.current = nextCombo;
+        setCombo(nextCombo);
+        setBestCombo((value) => Math.max(value, nextCombo));
+        world.correct += 1;
+        world.score += 120 + nextCombo * 12;
+        setFeedback("correct");
+        const bonusIds = Object.keys(BONUSES) as BonusId[];
+        const start = (questionCursor * 2 + nextCombo) % bonusIds.length;
+        setBonusDraft([bonusIds[start], bonusIds[(start + 2) % bonusIds.length], bonusIds[(start + 4) % bonusIds.length]]);
+        const nextResolution = { action: true, bonus: true };
+        resolutionRef.current = nextResolution;
+        setResolution(nextResolution);
+        spawnBurst(world, "#9dffe9", 12);
+        playTone("correct");
+      } else {
+        comboRef.current = 0;
+        setCombo(0);
+        world.wrong += 1;
+        setFeedback("wrong");
+        playTone("wrong");
+        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+        advanceTimerRef.current = setTimeout(() => {
+          if (phaseRef.current !== "playing") return;
+          setQuestionCursor((cursor) => cursor + 1);
+          setFeedback(null);
+          setSelectedAnswer(null);
+        }, 620);
+      }
+    },
+    [feedback, playTone, question.correct, questionCursor],
+  );
+
+  const applyBonus = useCallback(
+    (bonusId: BonusId, level: 1 | 2 = 1) => {
+      if (phaseRef.current !== "playing") return;
+      const world = worldRef.current;
+      const ringIndex = world.player.ringIndex;
+      const ring = world.rings[ringIndex];
+      const duration = 6 * (level === 2 ? 1.55 : 1);
+      const neighborIndex = ringIndex === 0 ? 1 : ringIndex - 1;
+
+      if (bonusId === "brake") {
+        ring.temporaryMultiplier = 0.45;
+        ring.temporaryUntil = world.elapsed + duration;
+        world.rings[neighborIndex].temporaryMultiplier = 1.45;
+        world.rings[neighborIndex].temporaryUntil = world.elapsed + duration;
+      }
+      if (bonusId === "reverse") ring.reversedUntil = world.elapsed + duration;
+      if (bonusId === "overdrive") {
+        ring.temporaryMultiplier = level === 2 ? 2.1 : 1.75;
+        ring.temporaryUntil = world.elapsed + duration;
+      }
+      if (bonusId === "shift") {
+        ring.angle = normalizeAngle(ring.angle + (level === 2 ? Math.PI / 3 : (Math.PI * 2) / 9));
+      }
+      if (bonusId === "blackout") {
+        world.hazardsDisabledUntil = world.elapsed + duration;
+        world.rings.forEach((targetRing) => {
+          targetRing.temporaryMultiplier = 1.28;
+          targetRing.temporaryUntil = world.elapsed + duration;
+        });
+      }
+      world.score += 35 * level;
+      spawnBurst(world, BONUSES[bonusId].color, level === 2 ? 22 : 14);
+      showBanner(BONUSES[bonusId].name + (level === 2 ? " ×2" : "") + " · " + BONUSES[bonusId].effect);
+      playTone("bonus");
+    },
+    [playTone, showBanner],
+  );
+
+  const chooseBonus = useCallback(
+    (bonusId: BonusId) => {
+      if (!resolutionRef.current.bonus || phaseRef.current !== "playing") return;
+      const current = inventoryRef.current;
+      const duplicateIndex = current.findIndex((bonus) => bonus.id === bonusId);
+      let next: StoredBonus[];
+      if (duplicateIndex >= 0) {
+        next = current.map((bonus, index) => index === duplicateIndex ? { ...bonus, level: 2 as const } : bonus);
+        showBanner(BONUSES[bonusId].name + " УСИЛЕН · эффект ×2");
+      } else if (current.length < 2) {
+        next = [...current, { id: bonusId, level: 1 }];
+        showBanner(BONUSES[bonusId].name + " СОХРАНЁН · нажми слот, когда понадобится");
+      } else {
+        next = current;
+        applyBonus(bonusId);
+        showBanner("СЛОТЫ ЗАНЯТЫ · " + BONUSES[bonusId].name + " СРАБОТАЛ СРАЗУ");
+      }
+      inventoryRef.current = next;
+      setInventory(next);
+      completeResolutionPart("bonus");
+    },
+    [applyBonus, completeResolutionPart, showBanner],
+  );
+
+  const activateStoredBonus = useCallback(
+    (index: number) => {
+      if (phaseRef.current !== "playing") return;
+      const stored = inventoryRef.current[index];
+      if (!stored) return;
+      const next = inventoryRef.current.filter((_, itemIndex) => itemIndex !== index);
+      inventoryRef.current = next;
+      setInventory(next);
+      applyBonus(stored.id, stored.level);
+    },
+    [applyBonus],
+  );
+
+  const performAction = useCallback(
+    (action: ActionId) => {
+      if (!resolutionRef.current.action || phaseRef.current !== "playing") return;
+      const world = worldRef.current;
+      const player = world.player;
+      const beforeAngle = getPlayerWorldAngle(world);
+      let performed = true;
+
+      if (action === "step-left" && player.mode === "ring") {
+        player.localAngle = normalizeAngle(player.localAngle - STEP_ANGLE);
+      } else if (action === "step-right" && player.mode === "ring") {
+        player.localAngle = normalizeAngle(player.localAngle + STEP_ANGLE);
+      } else if (action === "outer") {
+        if (player.ringIndex === 0) {
+          performed = false;
+        } else {
+          const angle = getPlayerWorldAngle(world);
+          player.ringIndex -= 1;
+          if (player.mode === "ring") player.localAngle = normalizeAngle(angle - world.rings[player.ringIndex].angle);
+        }
+      } else if (action === "inner") {
+        if (player.ringIndex === 2) {
+          if (Object.values(world.terminals).every(Boolean)) {
+            world.score += Math.round(world.phaseTime * 30) + 2200;
+            spawnBurst(world, "#f5d94e", 48);
+            setGamePhase("won");
+            playTone("win");
+            showBanner("СМЕНА ЗАВЕРШЕНА · КОНТУР СТАБИЛЕН");
+          } else {
+            performed = false;
+          }
+        } else {
+          const angle = getPlayerWorldAngle(world);
+          player.ringIndex += 1;
+          if (player.mode === "ring") player.localAngle = normalizeAngle(angle - world.rings[player.ringIndex].angle);
+        }
+      } else if (action === "spoke") {
+        if (player.mode === "spoke") {
+          const angle = getPlayerWorldAngle(world);
+          player.mode = "ring";
+          player.localAngle = normalizeAngle(angle - world.rings[player.ringIndex].angle);
+        } else {
+          const nearest = nearestSpoke(world);
+          if (nearest.distance >= 0.2) {
+            performed = false;
+          } else {
+            player.mode = "spoke";
+            player.spokeIndex = nearest.index;
+          }
+        }
+      } else {
+        performed = false;
+      }
+
+      if (!performed) return;
+      world.score += 25;
+      spawnBurst(world, "#ff9a62", 10, player.ringIndex, beforeAngle);
+      playTone("move");
+      completeResolutionPart("action");
+    },
+    [completeResolutionPart, playTone, setGamePhase, showBanner],
+  );
+
+  const releaseSpokePulse = useCallback(() => {
+    const world = worldRef.current;
+    if (phaseRef.current !== "playing" || world.spokeCharge < 99.5) return;
+    world.spokeCharge = 0;
+    world.rings.forEach((ring) => { ring.reversedUntil = world.elapsed + 4.5; });
+    spawnBurst(world, "#d7fff6", 34);
+    playTone("bonus");
+    showBanner("ИМПУЛЬС СПИЦЫ · ВСЕ КОЛЬЦА РАЗВЕРНУТЫ НА 4.5 СЕК");
+  }, [playTone, showBanner]);
+
+  const toggleSound = useCallback(() => {
+    setSoundEnabled((enabled) => {
+      const next = !enabled;
+      soundRef.current = next;
+      if (next) playTone("move");
+      return next;
+    });
+  }, [playTone]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (phaseRef.current === "briefing" && event.key === "Enter") {
+        event.preventDefault();
+        startGame();
+        return;
+      }
+      if ((phaseRef.current === "won" || phaseRef.current === "lost") && event.key === "Enter") {
+        event.preventDefault();
+        startGame();
+        return;
+      }
+      if (phaseRef.current !== "playing") return;
+
+      if (!feedback && !resolutionRef.current.action && !resolutionRef.current.bonus && ["1", "2", "3"].includes(event.key)) {
+        event.preventDefault();
+        handleAnswer(Number(event.key) - 1);
+        return;
+      }
+      if (resolutionRef.current.action) {
+        const key = event.key.toLowerCase();
+        if (key === "a" || event.key === "ArrowLeft") {
+          event.preventDefault();
+          performAction("step-left");
+        } else if (key === "d" || event.key === "ArrowRight") {
+          event.preventDefault();
+          performAction("step-right");
+        } else if (key === "w" || event.key === "ArrowUp") {
+          event.preventDefault();
+          performAction("outer");
+        } else if (key === "s" || event.key === "ArrowDown") {
+          event.preventDefault();
+          performAction("inner");
+        } else if (event.code === "Space") {
+          event.preventDefault();
+          performAction("spoke");
+        }
+      }
+      if (event.key.toLowerCase() === "z") activateStoredBonus(0);
+      if (event.key.toLowerCase() === "x") activateStoredBonus(1);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [activateStoredBonus, feedback, handleAnswer, performAction, startGame]);
+
+  const objective = useMemo(() => {
+    if (terminalCount === 3) return "ПРОРВИСЬ В ЦЕНТР";
+    if (terminalCount === 0) return "ВЫБЕРИ ПЕРВЫЙ УЗЕЛ";
+    return "АКТИВИРУЙ ЕЩЁ " + (3 - terminalCount) + " " + (3 - terminalCount === 1 ? "УЗЕЛ" : "УЗЛА");
+  }, [terminalCount]);
+
+  const resultAccuracy =
+    hud.correct + hud.wrong > 0
+      ? Math.round((hud.correct / (hud.correct + hud.wrong)) * 100)
+      : 100;
+
+  return (
+    <main className="game-shell" data-phase={phase}>
+      <header className="topbar">
+        <div className="brand-lockup">
+          <span className="brand-kicker">Deutsch / arcade drill</span>
+          <h1>RINGWERK</h1>
+        </div>
+
+        <div className="run-status" aria-label="Статус забега">
+          <div className="timer-block">
+            <span>ЗАРЯД КОНТУРА</span>
+            <strong className={hud.time < 12 ? "is-critical" : ""}>
+              {Math.max(0, Math.ceil(hud.time)).toString().padStart(2, "0")}
+              <small>с</small>
+            </strong>
+          </div>
+          <div className="integrity" aria-label={"Целостность: " + hud.health + " из 3"}>
+            <span>ЦЕЛОСТНОСТЬ</span>
+            <div>
+              {[0, 1, 2].map((heart) => (
+                <i key={heart} className={heart < hud.health ? "is-full" : ""} />
+              ))}
+            </div>
+          </div>
+          <button
+            className="sound-toggle"
+            type="button"
+            onClick={toggleSound}
+            aria-label={soundEnabled ? "Выключить звук" : "Включить звук"}
+          >
+            {soundEnabled ? "ЗВУК ON" : "ЗВУК OFF"}
+          </button>
+        </div>
+      </header>
+
+      <section className="game-layout" aria-label="Игровой экран Ringwerk">
+        <section className="arena-panel" aria-labelledby="arena-heading">
+          <div className="arena-toolbar">
+            <div className="live-state">
+              <span className="live-dot" />
+              <strong id="arena-heading">МИР НЕ ОСТАНАВЛИВАЕТСЯ</strong>
+            </div>
+            <span className="location-chip">
+              {RING_NAMES[hud.ringIndex]} · {hud.mode === "spoke" ? "НА СПИЦЕ" : "НА КОЛЬЦЕ"}
+            </span>
+            <span className={"threat-chip " + (hud.threat && hud.threat.seconds < 7 ? "is-near" : "")}>
+              {hud.threat
+                ? hud.threat.label + " ≈ " + Math.max(1, Math.ceil(hud.threat.seconds)) + "с"
+                : "СЕКТОР ЧИСТ"}
+            </span>
+          </div>
+
+          <div className="canvas-wrap">
+            <canvas
+              ref={canvasRef}
+              aria-label={
+                "Игрок на " +
+                RING_NAMES[hud.ringIndex].toLowerCase() +
+                " кольце. Активировано терминалов: " +
+                terminalCount +
+                " из 3."
+              }
+            />
+            <div className="canvas-vignette" aria-hidden="true" />
+
+            {banner && (
+              <div className="event-banner" role="status" aria-live="polite">
+                {banner}
+              </div>
+            )}
+
+            {phase === "briefing" && (
+              <div className="game-overlay briefing-overlay">
+                <div className="overlay-copy">
+                  <span className="overlay-kicker">ПРОТОКОЛ СМЕНЫ 01</span>
+                  <h2>Мир не ждёт<br />твоего ответа.</h2>
+                  <p>
+                    Кольца и спицы движутся в реальном времени. Правильный
+                    немецкий ответ даёт одно действие и один опасно-полезный
+                    протокол.
+                  </p>
+                </div>
+                <ol className="rule-strip">
+                  <li><b>01</b><span><strong>ОТВЕТЬ</strong>механизм продолжает ход</span></li>
+                  <li><b>02</b><span><strong>СДВИНЬСЯ</strong>по кольцу или между ними</span></li>
+                  <li><b>03</b><span><strong>РИСКНИ</strong>бонус меняет всю машину</span></li>
+                </ol>
+                <button className="primary-button" type="button" onClick={startGame}>
+                  <span>ЗАПУСТИТЬ МЕХАНИЗМ</span>
+                  <kbd>Enter</kbd>
+                </button>
+              </div>
+            )}
+
+            {(phase === "won" || phase === "lost") && (
+              <div className={"game-overlay result-overlay " + phase}>
+                <span className="overlay-kicker">
+                  {phase === "won" ? "СМЕНА ЗАВЕРШЕНА" : "КОНТУР ПОТЕРЯН"}
+                </span>
+                <h2>{phase === "won" ? "МЕХАНИЗМ ВЗЯТ" : "ПОПРОБУЙ ЕЩЁ РАЗ"}</h2>
+                <p>
+                  {phase === "won"
+                    ? "Ты активировал три узла и успел уйти через центральный шлюз."
+                    : lossReason}
+                </p>
+                <div className="result-stats">
+                  <span><b>{hud.score.toLocaleString("ru-RU")}</b>СЧЁТ</span>
+                  <span><b>{resultAccuracy}%</b>ТОЧНОСТЬ</span>
+                  <span><b>×{bestCombo}</b>ЛУЧШАЯ СЕРИЯ</span>
+                </div>
+                <button className="primary-button" type="button" onClick={startGame}>
+                  <span>{phase === "won" ? "ЕЩЁ СМЕНА" : "ПЕРЕЗАПУСК"}</span>
+                  <kbd>Enter</kbd>
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="ring-readout" aria-label="Скорости колец">
+            {RING_NAMES.map((name, index) => (
+              <div key={name} className={hud.ringIndex === index ? "is-current" : ""}>
+                <i style={{ backgroundColor: RING_COLORS[index] }} />
+                <span>{name}</span>
+                <strong>{hud.speeds[index] >= 0 ? "↻" : "↺"} {Math.abs(hud.speeds[index])}°/с</strong>
+              </div>
+            ))}
+            <div className="score-readout">
+              <span>СЧЁТ</span>
+              <strong>{hud.score.toLocaleString("ru-RU")}</strong>
+            </div>
+          </div>
+        </section>
+
+        <aside className="control-panel">
+          <section className="mission-card" aria-labelledby="mission-heading">
+            <div className="panel-heading">
+              <span>ЦЕЛЬ</span>
+              <strong id="mission-heading">{objective}</strong>
+            </div>
+            <div className="terminal-track">
+              {TERMINALS.map((terminal) => (
+                <div
+                  key={terminal.id}
+                  className={hud.terminals[terminal.id] ? "is-active" : ""}
+                  style={{ "--terminal-color": terminal.color } as React.CSSProperties}
+                >
+                  <b>{hud.terminals[terminal.id] ? "✓" : terminal.id}</b>
+                  <span><strong>{terminal.name}</strong>{terminal.effect}</span>
+                  <small>{terminal.cost}</small>
+                </div>
+              ))}
+            </div>
+          </section>
+
+          <section className={"quiz-card " + (feedback ? "is-" + feedback : "")} aria-labelledby="quiz-heading">
+            <div className="quiz-meta">
+              <span>ТЕСТ {String((questionCursor % QUESTIONS.length) + 1).padStart(2, "0")}</span>
+              <span className={combo >= 3 ? "combo-hot" : ""}>СЕРИЯ ×{combo}</span>
+            </div>
+            <h2 id="quiz-heading" lang="de">{question.prompt}</h2>
+            <div className="answer-grid">
+              {question.options.map((option, index) => {
+                const isSelected = selectedAnswer === index;
+                const isCorrect = feedback && index === question.correct;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => handleAnswer(index)}
+                    disabled={phase !== "playing" || feedback !== null || resolution.action || resolution.bonus}
+                    className={(isSelected ? "is-selected " : "") + (isCorrect ? "is-answer" : "")}
+                  >
+                    <kbd>{index + 1}</kbd>
+                    <span>{option}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="quiz-feedback" aria-live="polite">
+              {feedback === "correct" && <><b>ВЕРНО</b><span>{question.rule} · действие разблокировано</span></>}
+              {feedback === "wrong" && <><b>МИМО</b><span>{question.rule} · мир продолжает движение</span></>}
+              {!feedback && <span>Выбери форму. Таймер и механизм уже идут.</span>}
+            </div>
+          </section>
+
+          {phase === "playing" && resolution.action && (
+            <section className="action-card" aria-labelledby="action-heading">
+              <div className="panel-heading compact">
+                <span>ДЕЙСТВИЕ 1/1</span>
+                <strong id="action-heading">
+                  {hud.mode === "spoke" ? "КУДА ПО СПИЦЕ?" : "КУДА ДВИГАЕМСЯ?"}
+                </strong>
+              </div>
+              <div className="movement-grid">
+                {hud.mode === "ring" && (
+                  <>
+                    <button type="button" onClick={() => performAction("step-left")}><kbd>A</kbd><span>ШАГ ↺</span></button>
+                    <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W</kbd><span>НАРУЖУ</span></button>
+                    <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span></button>
+                    <button type="button" onClick={() => performAction("step-right")}><kbd>D</kbd><span>ШАГ ↻</span></button>
+                  </>
+                )}
+                {hud.mode === "spoke" && (
+                  <>
+                    <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W</kbd><span>ПО СПИЦЕ НАРУЖУ</span></button>
+                    <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span></button>
+                  </>
+                )}
+                <button
+                  className="spoke-action"
+                  type="button"
+                  onClick={() => performAction("spoke")}
+                  disabled={hud.mode === "ring" && !hud.nearSpoke}
+                >
+                  <kbd>Space</kbd>
+                  <span>
+                    {hud.mode === "spoke"
+                      ? "СОЙТИ СО СПИЦЫ"
+                      : hud.nearSpoke
+                        ? "СХВАТИТЬ СПИЦУ"
+                        : "СПИЦА ДАЛЕКО"}
+                  </span>
+                </button>
+              </div>
+            </section>
+          )}
+
+          {phase === "playing" && resolution.bonus && (
+            <section className="bonus-draft" aria-labelledby="bonus-heading">
+              <div className="panel-heading compact">
+                <span>ПРОТОКОЛ 1/1</span>
+                <strong id="bonus-heading">ВЫБЕРИ РИСК</strong>
+              </div>
+              <div className="bonus-options">
+                {bonusDraft.map((bonusId) => {
+                  const bonus = BONUSES[bonusId];
+                  return (
+                    <button
+                      key={bonus.id}
+                      type="button"
+                      onClick={() => chooseBonus(bonus.id)}
+                      style={{ "--bonus-color": bonus.color } as React.CSSProperties}
+                    >
+                      <b>{bonus.mark}</b>
+                      <span><strong>{bonus.name}</strong>{bonus.effect}</span>
+                      <small>НО: {bonus.cost}</small>
+                    </button>
+                  );
+                })}
+              </div>
+              <p>{inventory.length >= 2 ? "Слоты заняты: выбранный протокол сработает сразу." : "Протокол попадёт в один из двух слотов."}</p>
+            </section>
+          )}
+
+          <section className="inventory-card" aria-labelledby="inventory-heading">
+            <div className="inventory-head">
+              <div>
+                <span>ХРАНИЛИЩЕ 2 СЛОТА</span>
+                <strong id="inventory-heading">Нажми, чтобы применить</strong>
+              </div>
+              <div className="spoke-meter">
+                <span>СПИЦА {Math.round(hud.charge)}%</span>
+                <i><b style={{ width: hud.charge + "%" }} /></i>
+              </div>
+            </div>
+            <div className="inventory-slots">
+              {[0, 1].map((slot) => {
+                const stored = inventory[slot];
+                const definition = stored ? BONUSES[stored.id] : null;
+                return (
+                  <button
+                    key={slot}
+                    type="button"
+                    onClick={() => activateStoredBonus(slot)}
+                    disabled={!stored || phase !== "playing"}
+                    style={definition ? ({ "--bonus-color": definition.color } as React.CSSProperties) : undefined}
+                  >
+                    <kbd>{slot === 0 ? "Z" : "X"}</kbd>
+                    {definition ? (
+                      <><b>{definition.mark}</b><span><strong>{definition.name}{stored.level === 2 ? " ×2" : ""}</strong>{definition.effect}</span></>
+                    ) : (
+                      <span className="empty-slot">ПУСТО</span>
+                    )}
+                  </button>
+                );
+              })}
+              <button
+                className="pulse-button"
+                type="button"
+                onClick={releaseSpokePulse}
+                disabled={hud.charge < 99.5 || phase !== "playing"}
+              >
+                <b>ϟ</b>
+                <span><strong>ИМПУЛЬС</strong>разворот всех колец</span>
+              </button>
+            </div>
+          </section>
+        </aside>
+      </section>
+
+      <footer className="game-footer">
+        <p><span className="live-dot" /> Пока ты думаешь, всё продолжает двигаться.</p>
+        <p className="key-legend"><kbd>1–3</kbd> ответ <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Z / X</kbd> протокол</p>
+      </footer>
+    </main>
+  );
+}
