@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 const TAU = Math.PI * 2;
 const STEP_ANGLE = TAU / 18;
 const RING_NAMES = ["ВНЕШНИЙ", "СРЕДНИЙ", "ВНУТРЕННИЙ"] as const;
+const RING_LOCATIVE = ["внешнем", "среднем", "внутреннем"] as const;
 const RING_COLORS = ["#35e0c1", "#47b8ff", "#f5d94e"] as const;
 
 type Phase = "briefing" | "playing" | "won" | "lost";
@@ -169,7 +170,7 @@ function createWorld(): WorldState {
       { angle: -0.8, baseSpeed: -0.21, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
       { angle: 1.2, baseSpeed: 0.28, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
     ],
-    player: { ringIndex: 1, localAngle: 2.8, mode: "ring", spokeIndex: 0, health: 3, invulnerableUntil: 12 },
+    player: { ringIndex: 1, localAngle: 2.8, mode: "ring", spokeIndex: 0, health: 5, invulnerableUntil: 18 },
     terminals: { A: false, B: false, C: false },
     elapsed: 0,
     phaseTime: 90,
@@ -248,7 +249,7 @@ function snapshotWorld(world: WorldState): HudSnapshot {
     terminals: { ...world.terminals },
     speeds: world.rings.map((_, index) => Math.round((getRingSpeed(world, index) * 180) / Math.PI)),
     threat: getThreat(world),
-    nearSpoke: world.player.mode === "spoke" || nearestSpoke(world).distance < 0.2,
+    nearSpoke: world.player.mode === "spoke" || nearestSpoke(world).distance < 0.24,
     score: world.score,
     correct: world.correct,
     wrong: world.wrong,
@@ -635,7 +636,6 @@ export default function Home() {
   const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [resolution, setResolution] = useState({ action: false, bonus: false });
-  const [bonusDraft, setBonusDraft] = useState<BonusId[]>([]);
   const [inventory, setInventory] = useState<StoredBonus[]>([]);
   const [combo, setCombo] = useState(0);
   const [bestCombo, setBestCombo] = useState(0);
@@ -702,7 +702,6 @@ export default function Home() {
       setLossReason(reason);
       resolutionRef.current = { action: false, bonus: false };
       setResolution({ action: false, bonus: false });
-      setBonusDraft([]);
       setGamePhase("lost");
       playTone("hit");
     },
@@ -716,6 +715,7 @@ export default function Home() {
       if (count === 1) world.phaseTime = Math.max(world.phaseTime, 54);
       if (count === 2) world.phaseTime = Math.max(world.phaseTime, 38);
       if (count === 3) world.phaseTime = Math.max(world.phaseTime, 28);
+      world.player.health = Math.min(5, world.player.health + 1);
 
       if (id === "A") {
         world.phaseTime += 12;
@@ -792,14 +792,16 @@ export default function Home() {
       lastFrame = now;
 
       if (phaseRef.current === "playing") {
-        world.elapsed += delta;
-        world.phaseTime -= delta;
+        const simulationScale = resolutionRef.current.action ? 0.18 : 1;
+        const simulationDelta = delta * simulationScale;
+        world.elapsed += simulationDelta;
+        world.phaseTime -= simulationDelta;
         world.rings.forEach((ring, index) => {
-          ring.angle = normalizeAngle(ring.angle + getRingSpeed(world, index) * delta);
+          ring.angle = normalizeAngle(ring.angle + getRingSpeed(world, index) * simulationDelta);
         });
-        world.spokeAngle = normalizeAngle(world.spokeAngle + world.spokeSpeed * delta);
+        world.spokeAngle = normalizeAngle(world.spokeAngle + world.spokeSpeed * simulationDelta);
         if (world.player.mode === "spoke") {
-          world.spokeCharge = Math.min(100, world.spokeCharge + delta * 8.5);
+          world.spokeCharge = Math.min(100, world.spokeCharge + simulationDelta * 8.5);
         }
 
         world.particles.forEach((particle) => {
@@ -820,7 +822,7 @@ export default function Home() {
           }
         }
 
-        if (world.elapsed >= world.player.invulnerableUntil) {
+        if (!resolutionRef.current.action && world.elapsed >= world.player.invulnerableUntil) {
           const playerAngle = getPlayerWorldAngle(world);
           for (const hazard of HAZARDS) {
             if (!hazard.rings.includes(world.player.ringIndex as never) || !isHazardActive(world, hazard.id)) continue;
@@ -829,15 +831,10 @@ export default function Home() {
               world.player.invulnerableUntil = world.elapsed + 6;
               world.shake = 13;
               world.flash = 1;
-              const escapeDirection = getRingSpeed(world, world.player.ringIndex) >= 0 ? -1 : 1;
               if (world.player.mode === "spoke") {
                 world.player.mode = "ring";
                 world.player.localAngle = normalizeAngle(
-                  playerAngle - world.rings[world.player.ringIndex].angle + escapeDirection * STEP_ANGLE * 3.4,
-                );
-              } else {
-                world.player.localAngle = normalizeAngle(
-                  world.player.localAngle + escapeDirection * STEP_ANGLE * 3.4,
+                  playerAngle - world.rings[world.player.ringIndex].angle,
                 );
               }
               spawnBurst(world, hazard.color, 24);
@@ -882,7 +879,6 @@ export default function Home() {
     setResolution({ action: false, bonus: false });
     setFeedback(null);
     setSelectedAnswer(null);
-    setBonusDraft([]);
   }, []);
 
   const startGame = useCallback(() => {
@@ -912,8 +908,7 @@ export default function Home() {
         setQuestionCursor((cursor) => cursor + 1);
         setFeedback(null);
         setSelectedAnswer(null);
-        setBonusDraft([]);
-      }, 260);
+      }, 140);
     }
   }, []);
 
@@ -935,10 +930,28 @@ export default function Home() {
         world.correct += 1;
         world.score += 120 + nextCombo * 12;
         setFeedback("correct");
-        const bonusIds = Object.keys(BONUSES) as BonusId[];
-        const start = (questionCursor * 2 + nextCombo) % bonusIds.length;
-        setBonusDraft([bonusIds[start], bonusIds[(start + 2) % bonusIds.length], bonusIds[(start + 4) % bonusIds.length]]);
-        const nextResolution = { action: true, bonus: true };
+        if (nextCombo % 3 === 0) {
+          const bonusIds = Object.keys(BONUSES) as BonusId[];
+          const bonusId = bonusIds[(questionCursor + nextCombo / 3 - 1) % bonusIds.length];
+          const current = inventoryRef.current;
+          const duplicateIndex = current.findIndex((bonus) => bonus.id === bonusId);
+          let next = current;
+          if (duplicateIndex >= 0) {
+            next = current.map((bonus, index) =>
+              index === duplicateIndex ? { ...bonus, level: 2 as const } : bonus,
+            );
+            showBanner("СЕРИЯ ×" + nextCombo + " · " + BONUSES[bonusId].name + " УСИЛЕН");
+          } else if (current.length < 2) {
+            next = [...current, { id: bonusId, level: 1 }];
+            showBanner("СЕРИЯ ×" + nextCombo + " · " + BONUSES[bonusId].name + " В СЛОТЕ");
+          } else {
+            world.score += 120;
+            showBanner("СЕРИЯ ×" + nextCombo + " · СЛОТЫ ПОЛНЫ · +120");
+          }
+          inventoryRef.current = next;
+          setInventory(next);
+        }
+        const nextResolution = { action: true, bonus: false };
         resolutionRef.current = nextResolution;
         setResolution(nextResolution);
         spawnBurst(world, "#9dffe9", 12);
@@ -955,10 +968,10 @@ export default function Home() {
           setQuestionCursor((cursor) => cursor + 1);
           setFeedback(null);
           setSelectedAnswer(null);
-        }, 620);
+        }, 1050);
       }
     },
-    [feedback, playTone, question.correct, questionCursor],
+    [feedback, playTone, question.correct, questionCursor, showBanner],
   );
 
   const applyBonus = useCallback(
@@ -999,30 +1012,6 @@ export default function Home() {
     [playTone, showBanner],
   );
 
-  const chooseBonus = useCallback(
-    (bonusId: BonusId) => {
-      if (!resolutionRef.current.bonus || phaseRef.current !== "playing") return;
-      const current = inventoryRef.current;
-      const duplicateIndex = current.findIndex((bonus) => bonus.id === bonusId);
-      let next: StoredBonus[];
-      if (duplicateIndex >= 0) {
-        next = current.map((bonus, index) => index === duplicateIndex ? { ...bonus, level: 2 as const } : bonus);
-        showBanner(BONUSES[bonusId].name + " УСИЛЕН · эффект ×2");
-      } else if (current.length < 2) {
-        next = [...current, { id: bonusId, level: 1 }];
-        showBanner(BONUSES[bonusId].name + " СОХРАНЁН · нажми слот, когда понадобится");
-      } else {
-        next = current;
-        applyBonus(bonusId);
-        showBanner("СЛОТЫ ЗАНЯТЫ · " + BONUSES[bonusId].name + " СРАБОТАЛ СРАЗУ");
-      }
-      inventoryRef.current = next;
-      setInventory(next);
-      completeResolutionPart("bonus");
-    },
-    [applyBonus, completeResolutionPart, showBanner],
-  );
-
   const activateStoredBonus = useCallback(
     (index: number) => {
       if (phaseRef.current !== "playing") return;
@@ -1051,6 +1040,7 @@ export default function Home() {
       } else if (action === "outer") {
         if (player.ringIndex === 0) {
           performed = false;
+          showBanner("ТЫ УЖЕ НА ВНЕШНЕМ КОЛЬЦЕ");
         } else {
           const angle = getPlayerWorldAngle(world);
           player.ringIndex -= 1;
@@ -1066,6 +1056,7 @@ export default function Home() {
             showBanner("СМЕНА ЗАВЕРШЕНА · КОНТУР СТАБИЛЕН");
           } else {
             performed = false;
+            showBanner("СНАЧАЛА АКТИВИРУЙ УЗЛЫ A, B И C");
           }
         } else {
           const angle = getPlayerWorldAngle(world);
@@ -1079,8 +1070,9 @@ export default function Home() {
           player.localAngle = normalizeAngle(angle - world.rings[player.ringIndex].angle);
         } else {
           const nearest = nearestSpoke(world);
-          if (nearest.distance >= 0.2) {
+          if (nearest.distance >= 0.28) {
             performed = false;
+            showBanner("СПИЦА ЕЩЁ ДАЛЕКО · ВЫБЕРИ ДРУГОЙ ХОД");
           } else {
             player.mode = "spoke";
             player.spokeIndex = nearest.index;
@@ -1190,10 +1182,10 @@ export default function Home() {
               <small>с</small>
             </strong>
           </div>
-          <div className="integrity" aria-label={"Целостность: " + hud.health + " из 3"}>
+          <div className="integrity" aria-label={"Целостность: " + hud.health + " из 5"}>
             <span>ЦЕЛОСТНОСТЬ</span>
             <div>
-              {[0, 1, 2].map((heart) => (
+              {[0, 1, 2, 3, 4].map((heart) => (
                 <i key={heart} className={heart < hud.health ? "is-full" : ""} />
               ))}
             </div>
@@ -1214,7 +1206,9 @@ export default function Home() {
           <div className="arena-toolbar">
             <div className="live-state">
               <span className="live-dot" />
-              <strong id="arena-heading">МИР НЕ ОСТАНАВЛИВАЕТСЯ</strong>
+              <strong id="arena-heading">
+                {resolution.action ? "ФОКУС · МЕХАНИЗМ ×0.18" : "МИР ДВИЖЕТСЯ"}
+              </strong>
             </div>
             <span className="location-chip">
               {RING_NAMES[hud.ringIndex]} · {hud.mode === "spoke" ? "НА СПИЦЕ" : "НА КОЛЬЦЕ"}
@@ -1231,7 +1225,7 @@ export default function Home() {
               ref={canvasRef}
               aria-label={
                 "Игрок на " +
-                RING_NAMES[hud.ringIndex].toLowerCase() +
+                RING_LOCATIVE[hud.ringIndex] +
                 " кольце. Активировано терминалов: " +
                 terminalCount +
                 " из 3."
@@ -1251,15 +1245,15 @@ export default function Home() {
                   <span className="overlay-kicker">ПРОТОКОЛ СМЕНЫ 01</span>
                   <h2>Мир не ждёт<br />твоего ответа.</h2>
                   <p>
-                    Кольца и спицы движутся в реальном времени. Правильный
-                    немецкий ответ даёт одно действие и один опасно-полезный
-                    протокол.
+                    Кольца движутся, пока ты отвечаешь. Верная форма даёт одно
+                    движение и включает короткий режим фокуса. Каждый третий
+                    верный ответ автоматически приносит протокол.
                   </p>
                 </div>
                 <ol className="rule-strip">
                   <li><b>01</b><span><strong>ОТВЕТЬ</strong>механизм продолжает ход</span></li>
-                  <li><b>02</b><span><strong>СДВИНЬСЯ</strong>по кольцу или между ними</span></li>
-                  <li><b>03</b><span><strong>РИСКНИ</strong>бонус меняет всю машину</span></li>
+                  <li><b>02</b><span><strong>СДВИНЬСЯ</strong>в фокусе всё замедлится</span></li>
+                  <li><b>03</b><span><strong>СЕРИЯ ×3</strong>протокол попадёт в слот</span></li>
                 </ol>
                 <button className="primary-button" type="button" onClick={startGame}>
                   <span>ЗАПУСТИТЬ МЕХАНИЗМ</span>
@@ -1328,111 +1322,95 @@ export default function Home() {
             </div>
           </section>
 
-          <section className={"quiz-card " + (feedback ? "is-" + feedback : "")} aria-labelledby="quiz-heading">
+          <section
+            className={
+              "quiz-card " +
+              (feedback ? "is-" + feedback : "") +
+              (resolution.action ? " is-action" : "")
+            }
+            aria-labelledby="quiz-heading"
+          >
             <div className="quiz-meta">
-              <span>ТЕСТ {String((questionCursor % QUESTIONS.length) + 1).padStart(2, "0")}</span>
+              <span>
+                {resolution.action
+                  ? "ХОД · ВЫБЕРИ 1 ДЕЙСТВИЕ"
+                  : "ТЕСТ " + String((questionCursor % QUESTIONS.length) + 1).padStart(2, "0")}
+              </span>
               <span className={combo >= 3 ? "combo-hot" : ""}>СЕРИЯ ×{combo}</span>
             </div>
             <h2 id="quiz-heading" lang="de">{question.prompt}</h2>
-            <div className="answer-grid">
-              {question.options.map((option, index) => {
-                const isSelected = selectedAnswer === index;
-                const isCorrect = feedback && index === question.correct;
-                return (
+            {!resolution.action ? (
+              <div className="answer-grid">
+                {question.options.map((option, index) => {
+                  const isSelected = selectedAnswer === index;
+                  const isCorrect = feedback && index === question.correct;
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      onClick={() => handleAnswer(index)}
+                      disabled={phase !== "playing" || feedback !== null}
+                      className={(isSelected ? "is-selected " : "") + (isCorrect ? "is-answer" : "")}
+                    >
+                      <kbd>{index + 1}</kbd>
+                      <span>{option}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="turn-action" aria-labelledby="action-heading">
+                <div className="action-callout">
+                  <strong id="action-heading">
+                    {hud.mode === "spoke" ? "КУДА ПО СПИЦЕ?" : "КУДА ДВИГАЕМСЯ?"}
+                  </strong>
+                  <span>МЕХАНИЗМ ЗАМЕДЛЕН</span>
+                </div>
+                <div className="movement-grid">
+                  {hud.mode === "ring" && (
+                    <>
+                      <button type="button" onClick={() => performAction("step-left")}><kbd>A / ←</kbd><span>ШАГ ↺</span></button>
+                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W / ↑</kbd><span>НАРУЖУ</span></button>
+                      <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span></button>
+                      <button type="button" onClick={() => performAction("step-right")}><kbd>D / →</kbd><span>ШАГ ↻</span></button>
+                    </>
+                  )}
+                  {hud.mode === "spoke" && (
+                    <>
+                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W / ↑</kbd><span>ПО СПИЦЕ НАРУЖУ</span></button>
+                      <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span></button>
+                    </>
+                  )}
                   <button
-                    key={option}
+                    className="spoke-action"
                     type="button"
-                    onClick={() => handleAnswer(index)}
-                    disabled={phase !== "playing" || feedback !== null || resolution.action || resolution.bonus}
-                    className={(isSelected ? "is-selected " : "") + (isCorrect ? "is-answer" : "")}
+                    onClick={() => performAction("spoke")}
+                    disabled={hud.mode === "ring" && !hud.nearSpoke}
                   >
-                    <kbd>{index + 1}</kbd>
-                    <span>{option}</span>
+                    <kbd>Space</kbd>
+                    <span>
+                      {hud.mode === "spoke"
+                        ? "СОЙТИ СО СПИЦЫ"
+                        : hud.nearSpoke
+                          ? "СХВАТИТЬ СПИЦУ"
+                          : "СПИЦА ДАЛЕКО"}
+                    </span>
                   </button>
-                );
-              })}
-            </div>
+                </div>
+              </div>
+            )}
             <div className="quiz-feedback" aria-live="polite">
-              {feedback === "correct" && <><b>ВЕРНО</b><span>{question.rule} · действие разблокировано</span></>}
+              {feedback === "correct" && <><b>ВЕРНО</b><span>{question.rule} · выбери одно движение</span></>}
               {feedback === "wrong" && <><b>МИМО</b><span>{question.rule} · мир продолжает движение</span></>}
               {!feedback && <span>Выбери форму. Таймер и механизм уже идут.</span>}
             </div>
           </section>
 
-          {phase === "playing" && resolution.action && (
-            <section className="action-card" aria-labelledby="action-heading">
-              <div className="panel-heading compact">
-                <span>ДЕЙСТВИЕ 1/1</span>
-                <strong id="action-heading">
-                  {hud.mode === "spoke" ? "КУДА ПО СПИЦЕ?" : "КУДА ДВИГАЕМСЯ?"}
-                </strong>
-              </div>
-              <div className="movement-grid">
-                {hud.mode === "ring" && (
-                  <>
-                    <button type="button" onClick={() => performAction("step-left")}><kbd>A</kbd><span>ШАГ ↺</span></button>
-                    <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W</kbd><span>НАРУЖУ</span></button>
-                    <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span></button>
-                    <button type="button" onClick={() => performAction("step-right")}><kbd>D</kbd><span>ШАГ ↻</span></button>
-                  </>
-                )}
-                {hud.mode === "spoke" && (
-                  <>
-                    <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W</kbd><span>ПО СПИЦЕ НАРУЖУ</span></button>
-                    <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span></button>
-                  </>
-                )}
-                <button
-                  className="spoke-action"
-                  type="button"
-                  onClick={() => performAction("spoke")}
-                  disabled={hud.mode === "ring" && !hud.nearSpoke}
-                >
-                  <kbd>Space</kbd>
-                  <span>
-                    {hud.mode === "spoke"
-                      ? "СОЙТИ СО СПИЦЫ"
-                      : hud.nearSpoke
-                        ? "СХВАТИТЬ СПИЦУ"
-                        : "СПИЦА ДАЛЕКО"}
-                  </span>
-                </button>
-              </div>
-            </section>
-          )}
-
-          {phase === "playing" && resolution.bonus && (
-            <section className="bonus-draft" aria-labelledby="bonus-heading">
-              <div className="panel-heading compact">
-                <span>ПРОТОКОЛ 1/1</span>
-                <strong id="bonus-heading">ВЫБЕРИ РИСК</strong>
-              </div>
-              <div className="bonus-options">
-                {bonusDraft.map((bonusId) => {
-                  const bonus = BONUSES[bonusId];
-                  return (
-                    <button
-                      key={bonus.id}
-                      type="button"
-                      onClick={() => chooseBonus(bonus.id)}
-                      style={{ "--bonus-color": bonus.color } as React.CSSProperties}
-                    >
-                      <b>{bonus.mark}</b>
-                      <span><strong>{bonus.name}</strong>{bonus.effect}</span>
-                      <small>НО: {bonus.cost}</small>
-                    </button>
-                  );
-                })}
-              </div>
-              <p>{inventory.length >= 2 ? "Слоты заняты: выбранный протокол сработает сразу." : "Протокол попадёт в один из двух слотов."}</p>
-            </section>
-          )}
-
           <section className="inventory-card" aria-labelledby="inventory-heading">
             <div className="inventory-head">
               <div>
-                <span>ХРАНИЛИЩЕ 2 СЛОТА</span>
-                <strong id="inventory-heading">Нажми, чтобы применить</strong>
+                <span>ПРОТОКОЛ КАЖДЫЕ 3 ВЕРНЫХ</span>
+                <strong id="inventory-heading">Копится сам · нажми, чтобы применить</strong>
               </div>
               <div className="spoke-meter">
                 <span>СПИЦА {Math.round(hud.charge)}%</span>
@@ -1475,7 +1453,7 @@ export default function Home() {
       </section>
 
       <footer className="game-footer">
-        <p><span className="live-dot" /> Пока ты думаешь, всё продолжает двигаться.</p>
+        <p><span className="live-dot" /> Во время ответа мир движется; после верного — фокус ×0.18.</p>
         <p className="key-legend"><kbd>1–3</kbd> ответ <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Z / X</kbd> протокол</p>
       </footer>
     </main>

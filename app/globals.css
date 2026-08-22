@@ -670,6 +670,15 @@ h1 {
   background: var(--danger);
 }
 
+.quiz-card.is-action {
+  border-color: rgba(71, 184, 255, 0.58);
+  box-shadow: 0 0 32px rgba(71, 184, 255, 0.12);
+}
+
+.quiz-card.is-action::before {
+  background: var(--cyan);
+}
+
 .quiz-meta {
   display: flex;
   justify-content: space-between;
@@ -701,7 +710,7 @@ h1 {
 
 .answer-grid button {
   min-width: 0;
-  min-height: 43px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -711,7 +720,7 @@ h1 {
   background: rgba(15, 40, 35, 0.9);
   color: var(--ink);
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: 0.74rem;
   font-weight: 800;
   transition:
     border-color 120ms ease,
@@ -777,26 +786,49 @@ h1 {
   color: #ff7b70;
 }
 
-.action-card,
-.bonus-draft,
 .inventory-card {
   padding: 12px;
 }
 
-.action-card {
-  border-color: rgba(71, 184, 255, 0.28) !important;
-  animation: panel-in 0.18s ease-out;
+.turn-action {
+  animation: panel-in 0.16s ease-out;
+}
+
+.action-callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 9px;
+}
+
+.action-callout strong {
+  color: #d9f4ff;
+  font-size: 0.74rem;
+  letter-spacing: 0.07em;
+}
+
+.action-callout span {
+  padding: 4px 7px;
+  border: 1px solid rgba(71, 184, 255, 0.3);
+  border-radius: 999px;
+  background: rgba(71, 184, 255, 0.08);
+  color: var(--cyan);
+  font-size: 0.48rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
 }
 
 .movement-grid {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   gap: 5px;
-  margin-top: 9px;
+  margin-top: 0;
 }
 
 .movement-grid button {
-  min-height: 43px;
+  min-height: 54px;
   display: grid;
   place-items: center;
   gap: 2px;
@@ -806,7 +838,7 @@ h1 {
   background: rgba(12, 34, 38, 0.92);
   color: #caefff;
   cursor: pointer;
-  font-size: 0.55rem;
+  font-size: 0.64rem;
   font-weight: 850;
   letter-spacing: 0.05em;
 }
@@ -824,12 +856,12 @@ h1 {
 
 .movement-grid kbd {
   color: var(--cyan);
-  font-size: 0.49rem;
+  font-size: 0.52rem;
 }
 
 .movement-grid .spoke-action {
   grid-column: 1 / -1;
-  min-height: 36px;
+  min-height: 46px;
   display: flex;
   grid-template: none;
   flex-direction: row;
@@ -1207,7 +1239,7 @@ h1 {
   }
 
   h1 {
-    font-size: 2.35rem;
+    font-size: 1.82rem;
   }
 
   .run-status {
@@ -1240,8 +1272,7 @@ h1 {
   }
 
   .sound-toggle {
-    min-width: 54px;
-    font-size: 0.46rem;
+    display: none;
   }
 
   .arena-toolbar {
@@ -1311,11 +1342,18 @@ h1 {
   }
 
   .answer-grid button {
-    min-height: 39px;
+    min-height: 52px;
+    font-size: 0.78rem;
   }
 
   .movement-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .movement-grid button,
+  .movement-grid .spoke-action {
+    min-height: 52px;
+    font-size: 0.7rem;
   }
 
   .bonus-options {
@@ -1345,13 +1383,27 @@ h1 {
   }
 
   .arena-panel {
-    height: 67svh;
-    min-height: 470px;
+    height: clamp(330px, 44svh, 420px);
+    min-height: 330px;
   }
 
   .control-panel {
     max-height: none;
+    display: flex;
+    flex-direction: column;
     overflow: visible;
+  }
+
+  .quiz-card {
+    order: 1;
+  }
+
+  .mission-card {
+    order: 2;
+  }
+
+  .inventory-card {
+    order: 3;
   }
 
   .rule-strip {

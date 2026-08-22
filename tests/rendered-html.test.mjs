@@ -40,18 +40,22 @@ test("server-renders the finished Ringwerk game shell", async () => {
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape|Wo oder Wohin/i);
 });
 
-test("source keeps the real-time game rules explicit", async () => {
+test("source keeps the fast but readable game rules explicit", async () => {
   const [page, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /world\.phaseTime -= delta/);
+  assert.match(page, /simulationScale = resolutionRef\.current\.action \? 0\.18 : 1/);
+  assert.match(page, /world\.phaseTime -= simulationDelta/);
+  assert.match(page, /!resolutionRef\.current\.action && world\.elapsed/);
   assert.match(page, /world\.spokeAngle = normalizeAngle/);
   assert.match(page, /ring\.angle = normalizeAngle/);
   assert.match(page, /type BonusId = "brake" \| "reverse" \| "overdrive" \| "shift" \| "blackout"/);
-  assert.match(page, /inventory\.length >= 2/);
+  assert.match(page, /nextCombo % 3 === 0/);
+  assert.match(page, /current\.length < 2/);
+  assert.doesNotMatch(page, /bonusDraft|chooseBonus/);
   assert.match(page, /Object\.values\(world\.terminals\)\.every\(Boolean\)/);
   assert.match(page, /\/game-assets\/player-core\.webp/);
   assert.match(layout, /RINGWERK — Deutsch unter Druck/);
