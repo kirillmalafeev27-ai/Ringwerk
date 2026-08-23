@@ -681,11 +681,105 @@ h1 {
 
 .quiz-meta {
   display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: 8px;
   color: var(--yellow);
   font-size: 0.55rem;
   font-weight: 900;
   letter-spacing: 0.13em;
+}
+
+.quiz-meta .pool-state {
+  overflow: hidden;
+  flex: 1;
+  color: var(--dim);
+  font-size: 0.47rem;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.impulse-meter {
+  margin-top: 10px;
+  padding: 8px 9px 7px;
+  border: 1px solid color-mix(in srgb, var(--impulse-color) 34%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--impulse-color) 7%, rgba(5, 18, 17, 0.95));
+  --impulse-color: var(--teal);
+}
+
+.impulse-meter.is-warning {
+  --impulse-color: var(--yellow);
+}
+
+.impulse-meter.is-critical {
+  --impulse-color: var(--danger);
+  animation: impulse-danger 0.55s ease-in-out infinite alternate;
+}
+
+.impulse-meter > div:first-child {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.49rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+}
+
+.impulse-meter > div:first-child strong {
+  color: var(--impulse-color);
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 11px color-mix(in srgb, var(--impulse-color) 54%, transparent);
+}
+
+.impulse-meter > div:first-child small {
+  margin-left: auto;
+  color: var(--dim);
+  font-size: 0.45rem;
+}
+
+.impulse-meter > i {
+  position: relative;
+  height: 8px;
+  display: block;
+  overflow: hidden;
+  margin-top: 5px;
+  border-radius: 99px;
+  background: rgba(219, 255, 246, 0.08);
+}
+
+.impulse-meter > i > b {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--impulse-color) 62%, white), var(--impulse-color));
+  box-shadow: 0 0 12px var(--impulse-color);
+  transition: width 80ms linear;
+}
+
+.impulse-meter > i > em {
+  position: absolute;
+  inset: 0 auto 0 var(--mark);
+  width: 1px;
+  background: rgba(4, 12, 11, 0.72);
+}
+
+.impulse-meter .mark-10 { --mark: 10%; }
+.impulse-meter .mark-40 { --mark: 40%; }
+.impulse-meter .mark-55 { --mark: 55%; }
+.impulse-meter .mark-80 { --mark: 80%; }
+
+.impulse-thresholds {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-top: 4px;
+  color: var(--dim);
+  font-size: 0.39rem;
+  letter-spacing: 0.02em;
 }
 
 .combo-hot {
@@ -694,7 +788,7 @@ h1 {
 }
 
 .quiz-card h2 {
-  margin: clamp(17px, 3vh, 29px) 0 14px;
+  margin: clamp(12px, 2vh, 20px) 0 12px;
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(1.28rem, 2.4vw, 2.05rem);
   font-weight: 500;
@@ -704,7 +798,7 @@ h1 {
 
 .answer-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -859,6 +953,12 @@ h1 {
   font-size: 0.52rem;
 }
 
+.movement-grid small {
+  color: var(--dim);
+  font-size: 0.42rem;
+  font-weight: 800;
+}
+
 .movement-grid .spoke-action {
   grid-column: 1 / -1;
   min-height: 46px;
@@ -869,6 +969,18 @@ h1 {
   gap: 9px;
   border-color: rgba(53, 224, 193, 0.24);
   color: #bafced;
+}
+
+.movement-grid .jump-action {
+  grid-column: 1 / -1;
+  min-height: 42px;
+  display: flex;
+  grid-template: none;
+  flex-direction: row;
+  justify-content: center;
+  gap: 9px;
+  border-color: rgba(245, 217, 78, 0.24);
+  color: #fff1a5;
 }
 
 .bonus-draft {
@@ -1108,6 +1220,11 @@ h1 {
 
 @keyframes live-pulse {
   50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+@keyframes impulse-danger {
+  from { box-shadow: 0 0 0 rgba(255, 78, 78, 0); }
+  to { box-shadow: 0 0 18px rgba(255, 78, 78, 0.18); }
 }
 
 @keyframes timer-alert {

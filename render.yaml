@@ -1,13 +1,15 @@
 services:
   - type: web
-    name: wo-oder-wohin
+    name: ringwerk
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
-    startCommand: npm start
+    buildCommand: npm ci --no-audit --no-fund && DEPLOY_TARGET=node npm run build
+    startCommand: npm run start:node
     healthCheckPath: /healthz
     envVars:
       - key: NODE_VERSION
         value: 24.14.1
       - key: NODE_ENV
         value: production
+      - key: HOST
+        value: 0.0.0.0

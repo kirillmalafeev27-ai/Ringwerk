@@ -1,25 +1,29 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useQuestionPool } from "./use-question-pool";
 
 const TAU = Math.PI * 2;
 const STEP_ANGLE = TAU / 18;
 const RING_NAMES = ["ВНЕШНИЙ", "СРЕДНИЙ", "ВНУТРЕННИЙ"] as const;
 const RING_LOCATIVE = ["внешнем", "среднем", "внутреннем"] as const;
 const RING_COLORS = ["#35e0c1", "#47b8ff", "#f5d94e"] as const;
+const IMPULSE_QUESTION_DECAY = 6.6;
+const IMPULSE_ACTION_DECAY = 9;
+const ACTION_THRESHOLDS = {
+  "step-left": 10,
+  "step-right": 10,
+  outer: 40,
+  inner: 40,
+  spoke: 55,
+  jump: 80,
+} as const;
 
 type Phase = "briefing" | "playing" | "won" | "lost";
 type TerminalId = "A" | "B" | "C";
 type PlayerMode = "ring" | "spoke";
 type BonusId = "brake" | "reverse" | "overdrive" | "shift" | "blackout";
-type ActionId = "step-left" | "step-right" | "outer" | "inner" | "spoke";
-
-type Question = {
-  prompt: string;
-  options: [string, string, string];
-  correct: number;
-  rule: string;
-};
+type ActionId = keyof typeof ACTION_THRESHOLDS;
 
 type BonusDefinition = {
   id: BonusId;
@@ -27,6 +31,7 @@ type BonusDefinition = {
   mark: string;
   effect: string;
   cost: string;
+  impulseCost: number;
   color: string;
 };
 
@@ -104,27 +109,12 @@ type AssetSet = {
   hazard?: HTMLImageElement;
 };
 
-const QUESTIONS: Question[] = [
-  { prompt: "Ich gehe ___ Maschinenraum.", options: ["in den", "im", "in dem"], correct: 0, rule: "Wohin? → Akkusativ" },
-  { prompt: "Der Kern liegt ___ Zentrum.", options: ["ins", "im", "in das"], correct: 1, rule: "Wo? → Dativ" },
-  { prompt: "Wir hängen das Kabel ___ Wand.", options: ["an die", "an der", "an den"], correct: 0, rule: "Wohin? → Akkusativ" },
-  { prompt: "Das Kabel hängt ___ Wand.", options: ["an die", "an der", "auf die"], correct: 1, rule: "Wo? → Dativ" },
-  { prompt: "Sie läuft ___ Brücke.", options: ["über die", "über der", "über dem"], correct: 0, rule: "Wohin? → Akkusativ" },
-  { prompt: "Sie wartet ___ Brücke.", options: ["auf die", "auf der", "an den"], correct: 1, rule: "Wo? → Dativ" },
-  { prompt: "Der Techniker stellt die Kiste ___ Terminal.", options: ["neben das", "neben dem", "am"], correct: 0, rule: "Wohin? → Akkusativ" },
-  { prompt: "Die Kiste steht ___ Terminal.", options: ["neben das", "neben dem", "ins"], correct: 1, rule: "Wo? → Dativ" },
-  { prompt: "Wir fahren ___ äußeren Ring.", options: ["auf den", "auf dem", "an der"], correct: 0, rule: "Wohin? → Akkusativ" },
-  { prompt: "Der Läufer ist ___ mittleren Ring.", options: ["auf dem", "auf den", "in den"], correct: 0, rule: "Wo? → Dativ" },
-  { prompt: "Ich lege den Schlüssel ___ Konsole.", options: ["auf die", "auf der", "unter dem"], correct: 0, rule: "Wohin? → Akkusativ" },
-  { prompt: "Der Schlüssel liegt ___ Konsole.", options: ["auf die", "auf der", "an die"], correct: 1, rule: "Wo? → Dativ" },
-];
-
 const BONUSES: Record<BonusId, BonusDefinition> = {
-  brake: { id: "brake", name: "ТОРМОЗ", mark: "Ⅱ", effect: "Твоё кольцо ×0.45", cost: "соседнее ×1.45", color: "#35e0c1" },
-  reverse: { id: "reverse", name: "РЕВЕРС", mark: "↺", effect: "Разворот на 6 сек", cost: "маршрут тоже меняется", color: "#a98cff" },
-  overdrive: { id: "overdrive", name: "ФОРСАЖ", mark: "»", effect: "Твоё кольцо ×1.75", cost: "опасности ближе", color: "#f5d94e" },
-  shift: { id: "shift", name: "СДВИГ", mark: "+", effect: "Рывок кольца на 40°", cost: "вся геометрия сдвинется", color: "#ff9d4a" },
-  blackout: { id: "blackout", name: "ГЛУШИЛКА", mark: "×", effect: "Ловушки выкл. 6 сек", cost: "все кольца ×1.28", color: "#ff6b6b" },
+  brake: { id: "brake", name: "ТОРМОЗ", mark: "Ⅱ", effect: "Твоё кольцо ×0.45", cost: "соседнее ×1.45", impulseCost: 20, color: "#35e0c1" },
+  reverse: { id: "reverse", name: "РЕВЕРС", mark: "↺", effect: "Разворот на 6 сек", cost: "маршрут тоже меняется", impulseCost: 30, color: "#a98cff" },
+  overdrive: { id: "overdrive", name: "ФОРСАЖ", mark: "»", effect: "Твоё кольцо ×1.75", cost: "опасности ближе", impulseCost: 20, color: "#f5d94e" },
+  shift: { id: "shift", name: "СДВИГ", mark: "+", effect: "Рывок кольца на 40°", cost: "вся геометрия сдвинется", impulseCost: 25, color: "#ff9d4a" },
+  blackout: { id: "blackout", name: "ГЛУШИЛКА", mark: "×", effect: "Ловушки выкл. 6 сек", cost: "все кольца ×1.28", impulseCost: 35, color: "#ff6b6b" },
 };
 
 const TERMINALS: Array<{
@@ -609,6 +599,15 @@ function spawnBurst(
 }
 
 export default function Home() {
+  const {
+    question,
+    questionNumber,
+    queuedCount,
+    isRefilling,
+    nextQuestion,
+    restartQuestions,
+    releaseQuestion,
+  } = useQuestionPool();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const worldRef = useRef<WorldState>(createWorld());
   const phaseRef = useRef<Phase>("briefing");
@@ -618,6 +617,10 @@ export default function Home() {
   const inventoryRef = useRef<StoredBonus[]>([]);
   const comboRef = useRef(0);
   const resolutionRef = useRef({ action: false, bonus: false });
+  const feedbackRef = useRef<"correct" | "wrong" | null>(null);
+  const impulseRef = useRef(100);
+  const impulseExpiredRef = useRef(false);
+  const onImpulseExpiredRef = useRef<() => void>(() => {});
   const callbacksRef = useRef<{
     onTerminal: (id: TerminalId) => void;
     onHit: (label: string) => void;
@@ -632,8 +635,8 @@ export default function Home() {
 
   const [phase, setPhase] = useState<Phase>("briefing");
   const [hud, setHud] = useState<HudSnapshot>(() => snapshotWorld(createWorld()));
-  const [questionCursor, setQuestionCursor] = useState(0);
   const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
+  const [impulse, setImpulse] = useState(100);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [resolution, setResolution] = useState({ action: false, bonus: false });
   const [inventory, setInventory] = useState<StoredBonus[]>([]);
@@ -643,7 +646,6 @@ export default function Home() {
   const [lossReason, setLossReason] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
 
-  const question = QUESTIONS[questionCursor % QUESTIONS.length];
   const terminalCount = Object.values(hud.terminals).filter(Boolean).length;
   const exitUnlocked = terminalCount === 3;
 
@@ -792,8 +794,7 @@ export default function Home() {
       lastFrame = now;
 
       if (phaseRef.current === "playing") {
-        const simulationScale = resolutionRef.current.action ? 0.18 : 1;
-        const simulationDelta = delta * simulationScale;
+        const simulationDelta = delta;
         world.elapsed += simulationDelta;
         world.phaseTime -= simulationDelta;
         world.rings.forEach((ring, index) => {
@@ -822,7 +823,7 @@ export default function Home() {
           }
         }
 
-        if (!resolutionRef.current.action && world.elapsed >= world.player.invulnerableUntil) {
+        if (world.elapsed >= world.player.invulnerableUntil) {
           const playerAngle = getPlayerWorldAngle(world);
           for (const hazard of HAZARDS) {
             if (!hazard.rings.includes(world.player.ringIndex as never) || !isHazardActive(world, hazard.id)) continue;
@@ -877,11 +878,31 @@ export default function Home() {
   const resetTurn = useCallback(() => {
     resolutionRef.current = { action: false, bonus: false };
     setResolution({ action: false, bonus: false });
+    feedbackRef.current = null;
     setFeedback(null);
     setSelectedAnswer(null);
+    impulseRef.current = 100;
+    impulseExpiredRef.current = false;
+    setImpulse(100);
   }, []);
 
+  const openQuestion = useCallback((restart = false) => {
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    if (restart) restartQuestions();
+    else nextQuestion();
+    resetTurn();
+  }, [nextQuestion, resetTurn, restartQuestions]);
+
+  const scheduleNextQuestion = useCallback((delay = 140) => {
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
+    advanceTimerRef.current = setTimeout(() => {
+      if (phaseRef.current !== "playing") return;
+      openQuestion(false);
+    }, delay);
+  }, [openQuestion]);
+
   const startGame = useCallback(() => {
+    const isFirstRun = phaseRef.current === "briefing";
     worldRef.current = createWorld();
     setHud(snapshotWorld(worldRef.current));
     inventoryRef.current = [];
@@ -889,34 +910,70 @@ export default function Home() {
     comboRef.current = 0;
     setCombo(0);
     setBestCombo(0);
-    setQuestionCursor(0);
     setLossReason("");
     setBanner("");
-    resetTurn();
+    if (isFirstRun) resetTurn();
+    else openQuestion(true);
     setGamePhase("playing");
     playTone("move");
-  }, [playTone, resetTurn, setGamePhase]);
+  }, [openQuestion, playTone, resetTurn, setGamePhase]);
 
   const completeResolutionPart = useCallback((part: "action" | "bonus") => {
     const next = { ...resolutionRef.current, [part]: false };
     resolutionRef.current = next;
     setResolution(next);
     if (!next.action && !next.bonus) {
-      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-      advanceTimerRef.current = setTimeout(() => {
-        if (phaseRef.current !== "playing") return;
-        setQuestionCursor((cursor) => cursor + 1);
-        setFeedback(null);
-        setSelectedAnswer(null);
-      }, 140);
+      worldRef.current.score += Math.round(impulseRef.current * 2);
+      impulseExpiredRef.current = true;
+      scheduleNextQuestion(140);
     }
-  }, []);
+  }, [scheduleNextQuestion]);
+
+  const expireImpulse = useCallback(() => {
+    if (phaseRef.current !== "playing" || impulseExpiredRef.current) return;
+    impulseExpiredRef.current = true;
+    impulseRef.current = 0;
+    setImpulse(0);
+    resolutionRef.current = { action: false, bonus: false };
+    setResolution({ action: false, bonus: false });
+    if (feedbackRef.current !== "correct") {
+      comboRef.current = 0;
+      setCombo(0);
+      worldRef.current.wrong += 1;
+      feedbackRef.current = "wrong";
+      setFeedback("wrong");
+      releaseQuestion(question);
+    }
+    playTone("wrong");
+    showBanner(feedbackRef.current === "correct" ? "ИМПУЛЬС ПОГАС · ХОД СГОРЕЛ" : "ИМПУЛЬС ПОГАС · НОВЫЙ ТЕСТ");
+    scheduleNextQuestion(760);
+  }, [playTone, question, releaseQuestion, scheduleNextQuestion, showBanner]);
+
+  useEffect(() => {
+    onImpulseExpiredRef.current = expireImpulse;
+  }, [expireImpulse]);
+
+  useEffect(() => {
+    if (phase !== "playing" || feedback === "wrong" || impulseExpiredRef.current) return;
+    let lastTick = performance.now();
+    const interval = window.setInterval(() => {
+      const now = performance.now();
+      const delta = Math.min(0.25, Math.max(0, (now - lastTick) / 1000));
+      lastTick = now;
+      const decay = resolutionRef.current.action ? IMPULSE_ACTION_DECAY : IMPULSE_QUESTION_DECAY;
+      const next = Math.max(0, impulseRef.current - delta * decay);
+      impulseRef.current = next;
+      setImpulse(next);
+      if (next <= 0 && !impulseExpiredRef.current) onImpulseExpiredRef.current();
+    }, 80);
+    return () => window.clearInterval(interval);
+  }, [feedback, phase, question.id, resolution.action]);
 
   const handleAnswer = useCallback(
     (answerIndex: number) => {
       if (
         phaseRef.current !== "playing" ||
-        feedback !== null ||
+        feedbackRef.current !== null ||
         resolutionRef.current.action ||
         resolutionRef.current.bonus
       ) return;
@@ -928,11 +985,12 @@ export default function Home() {
         setCombo(nextCombo);
         setBestCombo((value) => Math.max(value, nextCombo));
         world.correct += 1;
-        world.score += 120 + nextCombo * 12;
+        world.score += 120 + nextCombo * 12 + Math.round(impulseRef.current);
+        feedbackRef.current = "correct";
         setFeedback("correct");
         if (nextCombo % 3 === 0) {
           const bonusIds = Object.keys(BONUSES) as BonusId[];
-          const bonusId = bonusIds[(questionCursor + nextCombo / 3 - 1) % bonusIds.length];
+          const bonusId = bonusIds[(questionNumber + nextCombo / 3 - 1) % bonusIds.length];
           const current = inventoryRef.current;
           const duplicateIndex = current.findIndex((bonus) => bonus.id === bonusId);
           let next = current;
@@ -960,18 +1018,14 @@ export default function Home() {
         comboRef.current = 0;
         setCombo(0);
         world.wrong += 1;
+        feedbackRef.current = "wrong";
         setFeedback("wrong");
+        releaseQuestion(question);
         playTone("wrong");
-        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current);
-        advanceTimerRef.current = setTimeout(() => {
-          if (phaseRef.current !== "playing") return;
-          setQuestionCursor((cursor) => cursor + 1);
-          setFeedback(null);
-          setSelectedAnswer(null);
-        }, 1050);
+        scheduleNextQuestion(1050);
       }
     },
-    [feedback, playTone, question.correct, questionCursor, showBanner],
+    [playTone, question, questionNumber, releaseQuestion, scheduleNextQuestion, showBanner],
   );
 
   const applyBonus = useCallback(
@@ -1014,15 +1068,25 @@ export default function Home() {
 
   const activateStoredBonus = useCallback(
     (index: number) => {
-      if (phaseRef.current !== "playing") return;
+      if (phaseRef.current !== "playing" || !resolutionRef.current.action) {
+        showBanner("ПРОТОКОЛ ТРЕБУЕТ ЗАРЯЖЕННЫЙ ИМПУЛЬС");
+        return;
+      }
       const stored = inventoryRef.current[index];
       if (!stored) return;
+      const cost = BONUSES[stored.id].impulseCost + (stored.level === 2 ? 8 : 0);
+      if (impulseRef.current < cost) {
+        showBanner("НЕ ХВАТАЕТ ИМПУЛЬСА · НУЖНО " + cost + "%");
+        return;
+      }
+      impulseRef.current = Math.max(0, impulseRef.current - cost);
+      setImpulse(impulseRef.current);
       const next = inventoryRef.current.filter((_, itemIndex) => itemIndex !== index);
       inventoryRef.current = next;
       setInventory(next);
       applyBonus(stored.id, stored.level);
     },
-    [applyBonus],
+    [applyBonus, showBanner],
   );
 
   const performAction = useCallback(
@@ -1031,6 +1095,11 @@ export default function Home() {
       const world = worldRef.current;
       const player = world.player;
       const beforeAngle = getPlayerWorldAngle(world);
+      const requiredImpulse = action === "spoke" && player.mode === "spoke" ? 10 : ACTION_THRESHOLDS[action];
+      if (impulseRef.current < requiredImpulse) {
+        showBanner("ИМПУЛЬС СЛИШКОМ СЛАБ · НУЖНО " + requiredImpulse + "%");
+        return;
+      }
       let performed = true;
 
       if (action === "step-left" && player.mode === "ring") {
@@ -1078,11 +1147,22 @@ export default function Home() {
             player.spokeIndex = nearest.index;
           }
         }
+      } else if (action === "jump") {
+        if (player.mode !== "ring" || player.ringIndex === 1) {
+          performed = false;
+          showBanner("ПРЫЖОК ДОСТУПЕН ТОЛЬКО МЕЖДУ КРАЙНИМИ КОЛЬЦАМИ");
+        } else {
+          const angle = getPlayerWorldAngle(world);
+          player.ringIndex = player.ringIndex === 0 ? 2 : 0;
+          player.localAngle = normalizeAngle(angle - world.rings[player.ringIndex].angle);
+        }
       } else {
         performed = false;
       }
 
       if (!performed) return;
+      impulseRef.current = Math.max(0, impulseRef.current - requiredImpulse);
+      setImpulse(impulseRef.current);
       world.score += 25;
       spawnBurst(world, "#ff9a62", 10, player.ringIndex, beforeAngle);
       playTone("move");
@@ -1124,7 +1204,7 @@ export default function Home() {
       }
       if (phaseRef.current !== "playing") return;
 
-      if (!feedback && !resolutionRef.current.action && !resolutionRef.current.bonus && ["1", "2", "3"].includes(event.key)) {
+      if (!feedbackRef.current && !resolutionRef.current.action && !resolutionRef.current.bonus && ["1", "2", "3", "4"].includes(event.key)) {
         event.preventDefault();
         handleAnswer(Number(event.key) - 1);
         return;
@@ -1146,6 +1226,9 @@ export default function Home() {
         } else if (event.code === "Space") {
           event.preventDefault();
           performAction("spoke");
+        } else if (key === "q") {
+          event.preventDefault();
+          performAction("jump");
         }
       }
       if (event.key.toLowerCase() === "z") activateStoredBonus(0);
@@ -1165,6 +1248,13 @@ export default function Home() {
     hud.correct + hud.wrong > 0
       ? Math.round((hud.correct / (hud.correct + hud.wrong)) * 100)
       : 100;
+  const roundedImpulse = Math.max(0, Math.ceil(impulse));
+  const impulseTone = impulse < 20 ? "is-critical" : impulse < 55 ? "is-warning" : "is-strong";
+  const poolStatus = isRefilling
+    ? `ПУЛ ${queuedCount.toString().padStart(2, "0")} · ПОПОЛНЕНИЕ`
+    : queuedCount > 0
+      ? `ПУЛ ${queuedCount.toString().padStart(2, "0")}`
+      : "ПУЛ · ЛОКАЛЬНЫЙ РЕЗЕРВ";
 
   return (
     <main className="game-shell" data-phase={phase}>
@@ -1207,7 +1297,7 @@ export default function Home() {
             <div className="live-state">
               <span className="live-dot" />
               <strong id="arena-heading">
-                {resolution.action ? "ФОКУС · МЕХАНИЗМ ×0.18" : "МИР ДВИЖЕТСЯ"}
+                МИР ДВИЖЕТСЯ · БЕЗ ПАУЗЫ
               </strong>
             </div>
             <span className="location-chip">
@@ -1245,15 +1335,15 @@ export default function Home() {
                   <span className="overlay-kicker">ПРОТОКОЛ СМЕНЫ 01</span>
                   <h2>Мир не ждёт<br />твоего ответа.</h2>
                   <p>
-                    Кольца движутся, пока ты отвечаешь. Верная форма даёт одно
-                    движение и включает короткий режим фокуса. Каждый третий
-                    верный ответ автоматически приносит протокол.
+                    С появлением теста загорается импульс 100% и сразу начинает тухнуть.
+                    Верный ответ сохраняет остаток: шаг требует 10%, переход — 40%,
+                    спица — 55%. После ответа механизм не замедляется.
                   </p>
                 </div>
                 <ol className="rule-strip">
-                  <li><b>01</b><span><strong>ОТВЕТЬ</strong>механизм продолжает ход</span></li>
-                  <li><b>02</b><span><strong>СДВИНЬСЯ</strong>в фокусе всё замедлится</span></li>
-                  <li><b>03</b><span><strong>СЕРИЯ ×3</strong>протокол попадёт в слот</span></li>
+                  <li><b>01</b><span><strong>ОТВЕТЬ</strong>импульс уже сгорает</span></li>
+                  <li><b>02</b><span><strong>РЕШИ</strong>ждать окно или идти сейчас</span></li>
+                  <li><b>03</b><span><strong>СЕРИЯ ×3</strong>протокол тратит часть заряда</span></li>
                 </ol>
                 <button className="primary-button" type="button" onClick={startGame}>
                   <span>ЗАПУСТИТЬ МЕХАНИЗМ</span>
@@ -1334,9 +1424,22 @@ export default function Home() {
               <span>
                 {resolution.action
                   ? "ХОД · ВЫБЕРИ 1 ДЕЙСТВИЕ"
-                  : "ТЕСТ " + String((questionCursor % QUESTIONS.length) + 1).padStart(2, "0")}
+                  : "ТЕСТ " + String(questionNumber).padStart(2, "0")}
               </span>
+              <span className="pool-state">{poolStatus}</span>
               <span className={combo >= 3 ? "combo-hot" : ""}>СЕРИЯ ×{combo}</span>
+            </div>
+            <div
+              className={"impulse-meter " + impulseTone}
+              role="progressbar"
+              aria-label="Остаток импульса"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={roundedImpulse}
+            >
+              <div><span>ИМПУЛЬС</span><strong>{roundedImpulse}%</strong><small>{resolution.action ? "−9%/с" : "−6.6%/с"}</small></div>
+              <i><b style={{ width: impulse + "%" }} /><em className="mark-10" /><em className="mark-40" /><em className="mark-55" /><em className="mark-80" /></i>
+              <div className="impulse-thresholds"><span>ШАГ 10</span><span>ПЕРЕХОД 40</span><span>СПИЦА 55</span><span>ПРЫЖОК 80</span></div>
             </div>
             <h2 id="quiz-heading" lang="de">{question.prompt}</h2>
             {!resolution.action ? (
@@ -1364,28 +1467,28 @@ export default function Home() {
                   <strong id="action-heading">
                     {hud.mode === "spoke" ? "КУДА ПО СПИЦЕ?" : "КУДА ДВИГАЕМСЯ?"}
                   </strong>
-                  <span>МЕХАНИЗМ ЗАМЕДЛЕН</span>
+                  <span>МИР ИДЁТ · ИМПУЛЬС ТУХНЕТ</span>
                 </div>
                 <div className="movement-grid">
                   {hud.mode === "ring" && (
                     <>
-                      <button type="button" onClick={() => performAction("step-left")}><kbd>A / ←</kbd><span>ШАГ ↺</span></button>
-                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W / ↑</kbd><span>НАРУЖУ</span></button>
-                      <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span></button>
-                      <button type="button" onClick={() => performAction("step-right")}><kbd>D / →</kbd><span>ШАГ ↻</span></button>
+                      <button type="button" onClick={() => performAction("step-left")} disabled={impulse < 10}><kbd>A / ←</kbd><span>ШАГ ↺</span><small>≥10%</small></button>
+                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0 || impulse < 40}><kbd>W / ↑</kbd><span>НАРУЖУ</span><small>≥40%</small></button>
+                      <button type="button" onClick={() => performAction("inner")} disabled={(hud.ringIndex === 2 && !exitUnlocked) || impulse < 40}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span><small>≥40%</small></button>
+                      <button type="button" onClick={() => performAction("step-right")} disabled={impulse < 10}><kbd>D / →</kbd><span>ШАГ ↻</span><small>≥10%</small></button>
                     </>
                   )}
                   {hud.mode === "spoke" && (
                     <>
-                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0}><kbd>W / ↑</kbd><span>ПО СПИЦЕ НАРУЖУ</span></button>
-                      <button type="button" onClick={() => performAction("inner")} disabled={hud.ringIndex === 2 && !exitUnlocked}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span></button>
+                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0 || impulse < 40}><kbd>W / ↑</kbd><span>ПО СПИЦЕ НАРУЖУ</span><small>≥40%</small></button>
+                      <button type="button" onClick={() => performAction("inner")} disabled={(hud.ringIndex === 2 && !exitUnlocked) || impulse < 40}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span><small>≥40%</small></button>
                     </>
                   )}
                   <button
                     className="spoke-action"
                     type="button"
                     onClick={() => performAction("spoke")}
-                    disabled={hud.mode === "ring" && !hud.nearSpoke}
+                    disabled={hud.mode === "ring" ? (!hud.nearSpoke || impulse < 55) : impulse < 10}
                   >
                     <kbd>Space</kbd>
                     <span>
@@ -1395,14 +1498,25 @@ export default function Home() {
                           ? "СХВАТИТЬ СПИЦУ"
                           : "СПИЦА ДАЛЕКО"}
                     </span>
+                    <small>{hud.mode === "spoke" ? "≥10%" : "≥55%"}</small>
                   </button>
+                  {hud.mode === "ring" && (
+                    <button
+                      className="jump-action"
+                      type="button"
+                      onClick={() => performAction("jump")}
+                      disabled={hud.ringIndex === 1 || impulse < 80}
+                    >
+                      <kbd>Q</kbd><span>ПРЫЖОК ЧЕРЕЗ КОЛЬЦО</span><small>≥80%</small>
+                    </button>
+                  )}
                 </div>
               </div>
             )}
             <div className="quiz-feedback" aria-live="polite">
-              {feedback === "correct" && <><b>ВЕРНО</b><span>{question.rule} · выбери одно движение</span></>}
+              {feedback === "correct" && <><b>ВЕРНО</b><span>{question.rule} · осталось {roundedImpulse}%</span></>}
               {feedback === "wrong" && <><b>МИМО</b><span>{question.rule} · мир продолжает движение</span></>}
-              {!feedback && <span>Выбери форму. Таймер и механизм уже идут.</span>}
+              {!feedback && <span>Выбери форму. Импульс, таймер и механизм уже идут.</span>}
             </div>
           </section>
 
@@ -1410,7 +1524,7 @@ export default function Home() {
             <div className="inventory-head">
               <div>
                 <span>ПРОТОКОЛ КАЖДЫЕ 3 ВЕРНЫХ</span>
-                <strong id="inventory-heading">Копится сам · нажми, чтобы применить</strong>
+                <strong id="inventory-heading">Тратит импульс · основное движение остаётся</strong>
               </div>
               <div className="spoke-meter">
                 <span>СПИЦА {Math.round(hud.charge)}%</span>
@@ -1426,12 +1540,12 @@ export default function Home() {
                     key={slot}
                     type="button"
                     onClick={() => activateStoredBonus(slot)}
-                    disabled={!stored || phase !== "playing"}
+                    disabled={!stored || phase !== "playing" || !resolution.action || impulse < (definition?.impulseCost ?? 101) + (stored?.level === 2 ? 8 : 0)}
                     style={definition ? ({ "--bonus-color": definition.color } as React.CSSProperties) : undefined}
                   >
                     <kbd>{slot === 0 ? "Z" : "X"}</kbd>
                     {definition ? (
-                      <><b>{definition.mark}</b><span><strong>{definition.name}{stored.level === 2 ? " ×2" : ""}</strong>{definition.effect}</span></>
+                      <><b>{definition.mark}</b><span><strong>{definition.name}{stored.level === 2 ? " ×2" : ""} · −{definition.impulseCost + (stored.level === 2 ? 8 : 0)}%</strong>{definition.effect}</span></>
                     ) : (
                       <span className="empty-slot">ПУСТО</span>
                     )}
@@ -1453,8 +1567,8 @@ export default function Home() {
       </section>
 
       <footer className="game-footer">
-        <p><span className="live-dot" /> Во время ответа мир движется; после верного — фокус ×0.18.</p>
-        <p className="key-legend"><kbd>1–3</kbd> ответ <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Z / X</kbd> протокол</p>
+        <p><span className="live-dot" /> Мир не останавливается; заработанный импульс продолжает сгорать.</p>
+        <p className="key-legend"><kbd>1–4</kbd> ответ <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Q</kbd> прыжок <kbd>Z / X</kbd> протокол</p>
       </footer>
     </main>
   );
