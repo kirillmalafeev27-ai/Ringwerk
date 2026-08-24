@@ -32,8 +32,13 @@ try {
     Invoke-Git init -b $Branch
   }
 
-  $originUrl = & git remote get-url origin 2>$null
-  if ($LASTEXITCODE -eq 0) {
+  $remoteNames = @(& git remote)
+  if ($LASTEXITCODE -ne 0) {
+    throw "Could not read the repository remotes."
+  }
+
+  if ($remoteNames -contains "origin") {
+    $originUrl = Invoke-Git remote get-url origin
     if ($originUrl.Trim() -ne $RemoteUrl) {
       Invoke-Git remote set-url origin $RemoteUrl
       Write-Host "Updated origin: $RemoteUrl"
