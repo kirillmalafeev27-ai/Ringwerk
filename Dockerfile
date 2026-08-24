@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS dependencies
+FROM node:24.19.0-bookworm-slim AS dependencies
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --no-audit --no-fund
@@ -9,7 +9,7 @@ COPY . .
 ENV DEPLOY_TARGET=node
 RUN npm run build
 
-FROM node:24-bookworm-slim AS runtime
+FROM node:24.19.0-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000

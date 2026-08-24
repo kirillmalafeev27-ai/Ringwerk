@@ -1,6 +1,19 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  DEFAULT_LEARNING_SETTINGS,
+  GRAMMAR_TOPIC_GROUPS,
+  LANGUAGE_LEVELS,
+  LEARNING_SETTINGS_STORAGE_KEY,
+  LEXICAL_TOPIC_GROUPS,
+  normalizeLearningSettings,
+  type GrammarTopic,
+  type LanguageLevel,
+  type LearningSettings,
+  type LexicalTopic,
+  type QuestionMode,
+} from "@/lib/learning-settings";
 import { useQuestionPool } from "./use-question-pool";
 
 const TAU = Math.PI * 2;
@@ -19,7 +32,7 @@ const ACTION_THRESHOLDS = {
   jump: 80,
 } as const;
 
-type Phase = "briefing" | "playing" | "won" | "lost";
+type Phase = "setup" | "briefing" | "playing" | "won" | "lost";
 type TerminalId = "A" | "B" | "C";
 type PlayerMode = "ring" | "spoke";
 type BonusId = "brake" | "reverse" | "overdrive" | "shift" | "blackout";
@@ -108,6 +121,25 @@ type AssetSet = {
   terminal?: HTMLImageElement;
   hazard?: HTMLImageElement;
 };
+
+type RecallEvaluation = {
+  correct: boolean;
+  explanation: string;
+  correctAnswer: string;
+  evaluator: "local" | "semantic";
+};
+
+function normalizeRecallText(value: string) {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase("de-DE")
+    .replace(/ä/gu, "ae")
+    .replace(/ö/gu, "oe")
+    .replace(/ü/gu, "ue")
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim();
+}
 
 const BONUSES: Record<BonusId, BonusDefinition> = {
   brake: { id: "brake", name: "ТОРМОЗ", mark: "Ⅱ", effect: "Твоё кольцо ×0.45", cost: "соседнее ×1.45", impulseCost: 20, color: "#35e0c1" },
@@ -599,6 +631,10 @@ function spawnBurst(
 }
 
 export default function Home() {
+  const [phase, setPhase] = useState<Phase>("setup");
+  const [draftSettings, setDraftSettings] = useState<LearningSettings>(DEFAULT_LEARNING_SETTINGS);
+  const [sessionSettings, setSessionSettings] = useState<LearningSettings>(DEFAULT_LEARNING_SETTINGS);
+  const [settingsReady, setSettingsReady] = useState(false);
   const {
     question,
     questionNumber,
@@ -607,10 +643,11 @@ export default function Home() {
     nextQuestion,
     restartQuestions,
     releaseQuestion,
-  } = useQuestionPool();
+  } = useQuestionPool(sessionSettings, settingsReady && phase !== "setup");
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const recallInputRef = useRef<HTMLInputElement>(null);
   const worldRef = useRef<WorldState>(createWorld());
-  const phaseRef = useRef<Phase>("briefing");
+  const phaseRef = useRef<Phase>("setup");
   const soundRef = useRef(true);
   const assetsRef = useRef<AssetSet>({});
   const audioRef = useRef<AudioContext | null>(null);
@@ -620,6 +657,8 @@ export default function Home() {
   const feedbackRef = useRef<"correct" | "wrong" | null>(null);
   const impulseRef = useRef(100);
   const impulseExpiredRef = useRef(false);
+  const evaluatingRef = useRef(false);
+  const recallRequestRef = useRef(0);
   const onImpulseExpiredRef = useRef<() => void>(() => {});
   const callbacksRef = useRef<{
     onTerminal: (id: TerminalId) => void;
@@ -633,7 +672,6 @@ export default function Home() {
   const bannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [phase, setPhase] = useState<Phase>("briefing");
   const [hud, setHud] = useState<HudSnapshot>(() => snapshotWorld(createWorld()));
   const [feedback, setFeedback] = useState<"correct" | "wrong" | null>(null);
   const [impulse, setImpulse] = useState(100);
@@ -645,6 +683,9 @@ export default function Home() {
   const [banner, setBanner] = useState("");
   const [lossReason, setLossReason] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [recallAnswer, setRecallAnswer] = useState("");
+  const [isEvaluating, setIsEvaluating] = useState(false);
+  const [feedbackDetail, setFeedbackDetail] = useState("");
 
   const terminalCount = Object.values(hud.terminals).filter(Boolean).length;
   const exitUnlocked = terminalCount === 3;
@@ -653,6 +694,54 @@ export default function Home() {
     phaseRef.current = next;
     setPhase(next);
   }, []);
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [phase]);
+
+  useEffect(() => {
+    let cancelled = false;
+    let restored = DEFAULT_LEARNING_SETTINGS;
+    try {
+      const raw = window.localStorage.getItem(LEARNING_SETTINGS_STORAGE_KEY);
+      if (raw) restored = normalizeLearningSettings(JSON.parse(raw));
+    } catch {
+      // Private browsing and malformed old settings must not block the menu.
+    }
+    queueMicrotask(() => {
+      if (cancelled) return;
+      setDraftSettings(restored);
+      setSessionSettings(restored);
+      setSettingsReady(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const updateDraftSettings = useCallback((patch: Partial<LearningSettings>) => {
+    setDraftSettings((current) => normalizeLearningSettings({ ...current, ...patch }));
+  }, []);
+
+  const confirmLearningSettings = useCallback(() => {
+    const confirmed = normalizeLearningSettings(draftSettings);
+    setDraftSettings(confirmed);
+    setSessionSettings(confirmed);
+    try {
+      window.localStorage.setItem(LEARNING_SETTINGS_STORAGE_KEY, JSON.stringify(confirmed));
+    } catch {
+      // The current session remains fully playable without browser storage.
+    }
+    setGamePhase("briefing");
+  }, [draftSettings, setGamePhase]);
+
+  const returnToSetup = useCallback(() => {
+    recallRequestRef.current += 1;
+    evaluatingRef.current = false;
+    setIsEvaluating(false);
+    setDraftSettings(sessionSettings);
+    setGamePhase("setup");
+  }, [sessionSettings, setGamePhase]);
 
   const playTone = useCallback(
     (kind: "correct" | "wrong" | "move" | "bonus" | "terminal" | "hit" | "win") => {
@@ -793,7 +882,9 @@ export default function Home() {
       const delta = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000));
       lastFrame = now;
 
-      if (phaseRef.current === "playing") {
+      // A submitted free answer may need a semantic network check. That
+      // latency must never consume arena time or health.
+      if (phaseRef.current === "playing" && !evaluatingRef.current) {
         const simulationDelta = delta;
         world.elapsed += simulationDelta;
         world.phaseTime -= simulationDelta;
@@ -881,6 +972,11 @@ export default function Home() {
     feedbackRef.current = null;
     setFeedback(null);
     setSelectedAnswer(null);
+    setRecallAnswer("");
+    setFeedbackDetail("");
+    recallRequestRef.current += 1;
+    evaluatingRef.current = false;
+    setIsEvaluating(false);
     impulseRef.current = 100;
     impulseExpiredRef.current = false;
     setImpulse(100);
@@ -902,7 +998,6 @@ export default function Home() {
   }, [openQuestion]);
 
   const startGame = useCallback(() => {
-    const isFirstRun = phaseRef.current === "briefing";
     worldRef.current = createWorld();
     setHud(snapshotWorld(worldRef.current));
     inventoryRef.current = [];
@@ -912,11 +1007,10 @@ export default function Home() {
     setBestCombo(0);
     setLossReason("");
     setBanner("");
-    if (isFirstRun) resetTurn();
-    else openQuestion(true);
+    openQuestion(true);
     setGamePhase("playing");
     playTone("move");
-  }, [openQuestion, playTone, resetTurn, setGamePhase]);
+  }, [openQuestion, playTone, setGamePhase]);
 
   const completeResolutionPart = useCallback((part: "action" | "bonus") => {
     const next = { ...resolutionRef.current, [part]: false };
@@ -954,12 +1048,27 @@ export default function Home() {
   }, [expireImpulse]);
 
   useEffect(() => {
-    if (phase !== "playing" || feedback === "wrong" || impulseExpiredRef.current) return;
+    if (
+      phase !== "playing"
+      || sessionSettings.mode !== "recall"
+      || feedback
+      || resolution.action
+      || isEvaluating
+    ) return;
+    const frame = window.requestAnimationFrame(() => {
+      recallInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [feedback, isEvaluating, phase, question.id, resolution.action, sessionSettings.mode]);
+
+  useEffect(() => {
+    if (phase !== "playing" || feedback === "wrong" || isEvaluating || impulseExpiredRef.current) return;
     let lastTick = performance.now();
     const interval = window.setInterval(() => {
       const now = performance.now();
       const delta = Math.min(0.25, Math.max(0, (now - lastTick) / 1000));
       lastTick = now;
+      if (evaluatingRef.current) return;
       const decay = resolutionRef.current.action ? IMPULSE_ACTION_DECAY : IMPULSE_QUESTION_DECAY;
       const next = Math.max(0, impulseRef.current - delta * decay);
       impulseRef.current = next;
@@ -967,19 +1076,21 @@ export default function Home() {
       if (next <= 0 && !impulseExpiredRef.current) onImpulseExpiredRef.current();
     }, 80);
     return () => window.clearInterval(interval);
-  }, [feedback, phase, question.id, resolution.action]);
+  }, [feedback, isEvaluating, phase, question.id, resolution.action]);
 
-  const handleAnswer = useCallback(
-    (answerIndex: number) => {
+  const commitAnswer = useCallback(
+    (correct: boolean, answerIndex: number | null = null, detail = "", wrongDelay: number | null = 2800) => {
       if (
         phaseRef.current !== "playing" ||
         feedbackRef.current !== null ||
         resolutionRef.current.action ||
-        resolutionRef.current.bonus
+        resolutionRef.current.bonus ||
+        impulseExpiredRef.current
       ) return;
-      setSelectedAnswer(answerIndex);
+      if (answerIndex !== null) setSelectedAnswer(answerIndex);
+      setFeedbackDetail(detail);
       const world = worldRef.current;
-      if (answerIndex === question.correct) {
+      if (correct) {
         const nextCombo = comboRef.current + 1;
         comboRef.current = nextCombo;
         setCombo(nextCombo);
@@ -1022,11 +1133,88 @@ export default function Home() {
         setFeedback("wrong");
         releaseQuestion(question);
         playTone("wrong");
-        scheduleNextQuestion(1050);
+        if (wrongDelay !== null) scheduleNextQuestion(wrongDelay);
       }
     },
     [playTone, question, questionNumber, releaseQuestion, scheduleNextQuestion, showBanner],
   );
+
+  const handleAnswer = useCallback((answerIndex: number) => {
+    commitAnswer(answerIndex === question.correct, answerIndex);
+  }, [commitAnswer, question.correct]);
+
+  const submitRecallAnswer = useCallback(async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const userAnswer = recallAnswer.trim();
+    if (
+      !userAnswer
+      || sessionSettings.mode !== "recall"
+      || phaseRef.current !== "playing"
+      || feedbackRef.current !== null
+      || resolutionRef.current.action
+      || resolutionRef.current.bonus
+      || evaluatingRef.current
+      || impulseExpiredRef.current
+    ) return;
+
+    const activeQuestion = question;
+    const expectedAnswer = activeQuestion.options[activeQuestion.correct];
+    const requestId = ++recallRequestRef.current;
+    evaluatingRef.current = true;
+    setIsEvaluating(true);
+    setFeedbackDetail("Проверяем немецкую формулировку…");
+
+    let result: RecallEvaluation;
+    const evaluationController = new AbortController();
+    const evaluationTimeout = window.setTimeout(() => evaluationController.abort(), 9_000);
+    try {
+      const response = await fetch("/api/questions/evaluate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: activeQuestion.prompt,
+          context: activeQuestion.context,
+          translation: activeQuestion.translation,
+          expectedAnswer,
+          userAnswer,
+          level: sessionSettings.level,
+          lexicalTopic: sessionSettings.lexicalTopic,
+          grammarTopic: sessionSettings.grammarTopic,
+        }),
+        signal: evaluationController.signal,
+      });
+      if (!response.ok) throw new Error(`evaluation_${response.status}`);
+      const payload = await response.json() as Partial<RecallEvaluation>;
+      if (
+        typeof payload.correct !== "boolean"
+        || typeof payload.explanation !== "string"
+        || typeof payload.correctAnswer !== "string"
+        || (payload.evaluator !== "local" && payload.evaluator !== "semantic")
+      ) throw new Error("invalid_evaluation");
+      result = payload as RecallEvaluation;
+    } catch {
+      const correct = normalizeRecallText(userAnswer) === normalizeRecallText(expectedAnswer);
+      result = {
+        correct,
+        explanation: correct
+          ? "Ответ совпадает с эталоном."
+          : "Проверка другой формулировки недоступна; сравниваем со строгим эталоном.",
+        correctAnswer: expectedAnswer,
+        evaluator: "local",
+      };
+    } finally {
+      window.clearTimeout(evaluationTimeout);
+    }
+
+    if (requestId !== recallRequestRef.current) return;
+    evaluatingRef.current = false;
+    setIsEvaluating(false);
+    if (phaseRef.current !== "playing" || question.id !== activeQuestion.id) return;
+    const detail = result.correct
+      ? result.explanation
+      : `${result.explanation} Правильно: ${result.correctAnswer}`;
+    commitAnswer(result.correct, null, detail, null);
+  }, [commitAnswer, question, recallAnswer, sessionSettings]);
 
   const applyBonus = useCallback(
     (bonusId: BonusId, level: 1 | 2 = 1) => {
@@ -1192,6 +1380,8 @@ export default function Home() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("input, select, textarea, button, a[href], [contenteditable='true']")) return;
       if (phaseRef.current === "briefing" && event.key === "Enter") {
         event.preventDefault();
         startGame();
@@ -1204,7 +1394,19 @@ export default function Home() {
       }
       if (phaseRef.current !== "playing") return;
 
-      if (!feedbackRef.current && !resolutionRef.current.action && !resolutionRef.current.bonus && ["1", "2", "3", "4"].includes(event.key)) {
+      if (sessionSettings.mode === "recall" && feedbackRef.current === "wrong" && event.key === "Enter") {
+        event.preventDefault();
+        openQuestion(false);
+        return;
+      }
+
+      if (
+        sessionSettings.mode === "recognition"
+        && !feedbackRef.current
+        && !resolutionRef.current.action
+        && !resolutionRef.current.bonus
+        && ["1", "2", "3", "4"].includes(event.key)
+      ) {
         event.preventDefault();
         handleAnswer(Number(event.key) - 1);
         return;
@@ -1236,7 +1438,7 @@ export default function Home() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [activateStoredBonus, feedback, handleAnswer, performAction, startGame]);
+  }, [activateStoredBonus, feedback, handleAnswer, openQuestion, performAction, sessionSettings.mode, startGame]);
 
   const objective = useMemo(() => {
     if (terminalCount === 3) return "ПРОРВИСЬ В ЦЕНТР";
@@ -1247,14 +1449,17 @@ export default function Home() {
   const resultAccuracy =
     hud.correct + hud.wrong > 0
       ? Math.round((hud.correct / (hud.correct + hud.wrong)) * 100)
-      : 100;
+      : 0;
   const roundedImpulse = Math.max(0, Math.ceil(impulse));
   const impulseTone = impulse < 20 ? "is-critical" : impulse < 55 ? "is-warning" : "is-strong";
   const poolStatus = isRefilling
-    ? `ПУЛ ${queuedCount.toString().padStart(2, "0")} · ПОПОЛНЕНИЕ`
+    ? `ПУЛ ${queuedCount.toString().padStart(2, "0")} · ПОПОЛНЯЕТСЯ`
     : queuedCount > 0
       ? `ПУЛ ${queuedCount.toString().padStart(2, "0")}`
-      : "ПУЛ · ЛОКАЛЬНЫЙ РЕЗЕРВ";
+      : "ПУЛ · РЕЗЕРВ";
+  const visibleQuestionFocus = question.id.startsWith("reserve-")
+    ? `${question.level ?? ""} · ${question.lexicalTopic ?? "общая лексика"} · ${question.grammarTopic ?? "общая грамматика"}`
+    : `${sessionSettings.lexicalTopic} · ${sessionSettings.grammarTopic}`;
 
   return (
     <main className="game-shell" data-phase={phase}>
@@ -1264,7 +1469,7 @@ export default function Home() {
           <h1>RINGWERK</h1>
         </div>
 
-        <div className="run-status" aria-label="Статус забега">
+        {phase !== "setup" && <div className="run-status" aria-label="Статус забега">
           <div className="timer-block">
             <span>ЗАРЯД КОНТУРА</span>
             <strong className={hud.time < 12 ? "is-critical" : ""}>
@@ -1288,9 +1493,107 @@ export default function Home() {
           >
             {soundEnabled ? "ЗВУК ON" : "ЗВУК OFF"}
           </button>
-        </div>
+        </div>}
       </header>
 
+      {phase === "setup" ? (
+        <section className="learning-entry" aria-labelledby="learning-entry-title">
+          <div className="entry-intro">
+            <span className="overlay-kicker">НЕМЕЦКИЙ ЯЗЫК · ПРАКТИКА</span>
+            <h2 id="learning-entry-title">Собери свою<br />учебную смену.</h2>
+            <p>
+              Выбери уровень и две темы. Пул заранее готовит упражнения именно под этот фокус,
+              а встроенный резерв не даст игре зависнуть, если сеть задержится.
+            </p>
+            <div className="entry-loop" aria-label="Как устроена практика">
+              <span><b>01</b> ответь по-немецки</span>
+              <span><b>02</b> потрать импульс на движение</span>
+              <span><b>03</b> доберись до трёх узлов</span>
+            </div>
+          </div>
+
+          <div className="entry-settings-card">
+            <fieldset className="entry-fieldset">
+              <legend><b>УРОВЕНЬ</b><span>Сложность формулировок и грамматики</span></legend>
+              <div className="entry-segmented">
+                {LANGUAGE_LEVELS.map((level) => (
+                  <button
+                    key={level}
+                    type="button"
+                    className={draftSettings.level === level ? "is-selected" : ""}
+                    aria-pressed={draftSettings.level === level}
+                    onClick={() => updateDraftSettings({ level: level as LanguageLevel })}
+                  >
+                    {level}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+
+            <fieldset className="entry-fieldset">
+              <legend><b>РЕЖИМ ОТВЕТА</b><span>Один общий пул, два способа вспомнить</span></legend>
+              <div className="entry-mode-grid">
+                <button
+                  type="button"
+                  className={draftSettings.mode === "recognition" ? "is-selected" : ""}
+                  aria-pressed={draftSettings.mode === "recognition"}
+                  onClick={() => updateDraftSettings({ mode: "recognition" as QuestionMode })}
+                >
+                  <b>УЗНАВАНИЕ</b><span>Выбрать одну из четырёх форм</span>
+                </button>
+                <button
+                  type="button"
+                  className={draftSettings.mode === "recall" ? "is-selected" : ""}
+                  aria-pressed={draftSettings.mode === "recall"}
+                  onClick={() => updateDraftSettings({ mode: "recall" as QuestionMode })}
+                >
+                  <b>ВОСПРОИЗВЕДЕНИЕ</b><span>Написать ответ без вариантов</span>
+                </button>
+              </div>
+            </fieldset>
+
+            <div className="entry-topic-grid">
+              <label className="entry-select-field">
+                <span><b>ЛЕКСИЧЕСКАЯ ТЕМА</b><small>Слова и ситуации</small></span>
+                <select
+                  value={draftSettings.lexicalTopic}
+                  onChange={(event) => updateDraftSettings({ lexicalTopic: event.target.value as LexicalTopic })}
+                >
+                  {LEXICAL_TOPIC_GROUPS.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.topics.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+              <label className="entry-select-field">
+                <span><b>ГРАММАТИКА</b><small>Правило для закрепления</small></span>
+                <select
+                  value={draftSettings.grammarTopic}
+                  onChange={(event) => updateDraftSettings({ grammarTopic: event.target.value as GrammarTopic })}
+                >
+                  {GRAMMAR_TOPIC_GROUPS.map((group) => (
+                    <optgroup key={group.label} label={group.label}>
+                      {group.topics.map((topic) => <option key={topic} value={topic}>{topic}</option>)}
+                    </optgroup>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="entry-confirm-row">
+              <p>
+                <b>{draftSettings.level} · {draftSettings.mode === "recall" ? "БЕЗ ВАРИАНТОВ" : "4 ВАРИАНТА"}</b>
+                <span>{draftSettings.lexicalTopic} · {draftSettings.grammarTopic}</span>
+              </p>
+              <button className="primary-button" type="button" onClick={confirmLearningSettings} disabled={!settingsReady}>
+                <span>ПОДТВЕРДИТЬ ФОКУС</span>
+                <kbd>→</kbd>
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : (
       <section className="game-layout" aria-label="Игровой экран Ringwerk">
         <section className="arena-panel" aria-labelledby="arena-heading">
           <div className="arena-toolbar">
@@ -1339,16 +1642,25 @@ export default function Home() {
                     Верный ответ сохраняет остаток: шаг требует 10%, переход — 40%,
                     спица — 55%. После ответа механизм не замедляется.
                   </p>
+                  <div className="briefing-focus">
+                    <b>{sessionSettings.level} · {sessionSettings.mode === "recall" ? "ВОСПРОИЗВЕДЕНИЕ" : "УЗНАВАНИЕ"}</b>
+                    <span>{sessionSettings.lexicalTopic} · {sessionSettings.grammarTopic}</span>
+                  </div>
                 </div>
                 <ol className="rule-strip">
                   <li><b>01</b><span><strong>ОТВЕТЬ</strong>импульс уже сгорает</span></li>
                   <li><b>02</b><span><strong>РЕШИ</strong>ждать окно или идти сейчас</span></li>
                   <li><b>03</b><span><strong>СЕРИЯ ×3</strong>протокол тратит часть заряда</span></li>
                 </ol>
-                <button className="primary-button" type="button" onClick={startGame}>
-                  <span>ЗАПУСТИТЬ МЕХАНИЗМ</span>
-                  <kbd>Enter</kbd>
-                </button>
+                <div className="briefing-actions">
+                  <button className="primary-button" type="button" onClick={startGame}>
+                    <span>ЗАПУСТИТЬ МЕХАНИЗМ</span>
+                    <kbd>Enter</kbd>
+                  </button>
+                  <button className="secondary-button" type="button" onClick={returnToSetup}>
+                    ИЗМЕНИТЬ ФОКУС
+                  </button>
+                </div>
               </div>
             )}
 
@@ -1368,10 +1680,15 @@ export default function Home() {
                   <span><b>{resultAccuracy}%</b>ТОЧНОСТЬ</span>
                   <span><b>×{bestCombo}</b>ЛУЧШАЯ СЕРИЯ</span>
                 </div>
-                <button className="primary-button" type="button" onClick={startGame}>
-                  <span>{phase === "won" ? "ЕЩЁ СМЕНА" : "ПЕРЕЗАПУСК"}</span>
-                  <kbd>Enter</kbd>
-                </button>
+                <div className="briefing-actions">
+                  <button className="primary-button" type="button" onClick={startGame}>
+                    <span>{phase === "won" ? "ЕЩЁ СМЕНА" : "ПЕРЕЗАПУСК"}</span>
+                    <kbd>Enter</kbd>
+                  </button>
+                  <button className="secondary-button" type="button" onClick={returnToSetup}>
+                    СМЕНИТЬ УЧЕБНЫЙ ФОКУС
+                  </button>
+                </div>
               </div>
             )}
           </div>
@@ -1429,6 +1746,11 @@ export default function Home() {
               <span className="pool-state">{poolStatus}</span>
               <span className={combo >= 3 ? "combo-hot" : ""}>СЕРИЯ ×{combo}</span>
             </div>
+            <div className="quiz-focus" title={visibleQuestionFocus}>
+              <b>{sessionSettings.level}</b>
+              <span>{sessionSettings.mode === "recall" ? "ВОСПРОИЗВЕДЕНИЕ" : "УЗНАВАНИЕ"}</span>
+              <em>{visibleQuestionFocus}</em>
+            </div>
             <div
               className={"impulse-meter " + impulseTone}
               role="progressbar"
@@ -1441,26 +1763,56 @@ export default function Home() {
               <i><b style={{ width: impulse + "%" }} /><em className="mark-10" /><em className="mark-40" /><em className="mark-55" /><em className="mark-80" /></i>
               <div className="impulse-thresholds"><span>ШАГ 10</span><span>ПЕРЕХОД 40</span><span>СПИЦА 55</span><span>ПРЫЖОК 80</span></div>
             </div>
-            <h2 id="quiz-heading" lang="de">{question.prompt}</h2>
+            <p className="quiz-instruction">{question.prompt}</p>
+            <h2 id="quiz-heading" lang="de">{question.context}</h2>
+            {question.translation && <p className="quiz-translation">{question.translation}</p>}
             {!resolution.action ? (
-              <div className="answer-grid">
-                {question.options.map((option, index) => {
-                  const isSelected = selectedAnswer === index;
-                  const isCorrect = feedback && index === question.correct;
-                  return (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => handleAnswer(index)}
-                      disabled={phase !== "playing" || feedback !== null}
-                      className={(isSelected ? "is-selected " : "") + (isCorrect ? "is-answer" : "")}
-                    >
-                      <kbd>{index + 1}</kbd>
-                      <span>{option}</span>
+              sessionSettings.mode === "recognition" ? (
+                <div className="answer-grid">
+                  {question.options.map((option, index) => {
+                    const isSelected = selectedAnswer === index;
+                    const isCorrect = feedback && index === question.correct;
+                    return (
+                      <button
+                        key={option}
+                        type="button"
+                        onClick={() => handleAnswer(index)}
+                        disabled={phase !== "playing" || feedback !== null || isEvaluating}
+                        className={(isSelected ? "is-selected " : "") + (isCorrect ? "is-answer" : "")}
+                      >
+                        <kbd>{index + 1}</kbd>
+                        <span>{option}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <form className="recall-form" onSubmit={submitRecallAnswer}>
+                  <label htmlFor="recall-answer">
+                    Ответ по-немецки
+                    <small>ä / ö / ü можно писать как ae / oe / ue</small>
+                  </label>
+                  <div>
+                    <input
+                      ref={recallInputRef}
+                      id="recall-answer"
+                      lang="de"
+                      type="text"
+                      value={recallAnswer}
+                      onChange={(event) => setRecallAnswer(event.target.value)}
+                      placeholder="Напиши слово или фразу"
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={600}
+                      disabled={phase !== "playing" || feedback !== null || isEvaluating}
+                      required
+                    />
+                    <button type="submit" disabled={!recallAnswer.trim() || feedback !== null || isEvaluating}>
+                      {isEvaluating ? "ПРОВЕРЯЕМ…" : "ПРОВЕРИТЬ"}
                     </button>
-                  );
-                })}
-              </div>
+                  </div>
+                </form>
+              )
             ) : (
               <div className="turn-action" aria-labelledby="action-heading">
                 <div className="action-callout">
@@ -1514,9 +1866,16 @@ export default function Home() {
               </div>
             )}
             <div className="quiz-feedback" aria-live="polite">
-              {feedback === "correct" && <><b>ВЕРНО</b><span>{question.rule} · осталось {roundedImpulse}%</span></>}
-              {feedback === "wrong" && <><b>МИМО</b><span>{question.rule} · мир продолжает движение</span></>}
-              {!feedback && <span>Выбери форму. Импульс, таймер и механизм уже идут.</span>}
+              {feedback === "correct" && <><b>ВЕРНО</b><span>{feedbackDetail || question.rule} · осталось {roundedImpulse}%</span></>}
+              {feedback === "wrong" && <><b>МИМО</b><span>{feedbackDetail || question.rule} · мир продолжает движение</span>{sessionSettings.mode === "recall" && <button type="button" onClick={() => openQuestion(false)}>ПОНЯТНО →</button>}</>}
+              {!feedback && isEvaluating && <><b>ПРОВЕРКА</b><span>Импульс и арена зафиксированы: задержка сети не влияет на забег.</span></>}
+              {!feedback && !isEvaluating && (
+                <span>
+                  {sessionSettings.mode === "recall"
+                    ? "Введи ответ без вариантов. До отправки импульс уже сгорает."
+                    : "Выбери форму. Импульс, таймер и механизм уже идут."}
+                </span>
+              )}
             </div>
           </section>
 
@@ -1565,11 +1924,15 @@ export default function Home() {
           </section>
         </aside>
       </section>
+      )}
 
-      <footer className="game-footer">
+      {phase !== "setup" && <footer className="game-footer">
         <p><span className="live-dot" /> Мир не останавливается; заработанный импульс продолжает сгорать.</p>
-        <p className="key-legend"><kbd>1–4</kbd> ответ <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Q</kbd> прыжок <kbd>Z / X</kbd> протокол</p>
-      </footer>
+        <p className="key-legend">
+          {sessionSettings.mode === "recognition" && <><kbd>1–4</kbd> ответ </>}
+          <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Q</kbd> прыжок <kbd>Z / X</kbd> протокол
+        </p>
+      </footer>}
     </main>
   );
 }

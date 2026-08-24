@@ -1,18 +1,19 @@
-import { generateQuestions, QuestionRequestError } from "@/server/question-generation";
+import {
+  evaluateRecallAnswer,
+  RecallEvaluationRequestError,
+} from "@/server/recall-evaluation";
+
+const RATE_WINDOW_MS = 60_000;
+const CLIENT_LIMIT = 12;
+const GLOBAL_LIMIT = 60;
+const MAX_REQUEST_BYTES = 12_000;
 
 const requestsByClient = new Map<string, number[]>();
 let globalRequests: number[] = [];
-const RATE_WINDOW_MS = 60_000;
-const CLIENT_LIMIT = 6;
-const GLOBAL_LIMIT = 30;
-const MAX_REQUEST_BYTES = 16_000;
 
 function clientKey(request: Request) {
   const cloudflareRequest = request as Request & { cf?: unknown };
   const cloudflareAddress = cloudflareRequest.cf ? request.headers.get("cf-connecting-ip") : null;
-  // Northflank's edge is the closest proxy, so the last forwarded address is
-  // safer than the user-controlled first entry. The global ceiling below is
-  // authoritative even if every client header is forged.
   const forwardedAddress = request.headers.get("x-forwarded-for")
     ?.split(",")
     .map((part) => part.trim())
@@ -35,6 +36,7 @@ function withinRateLimit(request: Request) {
     requestsByClient.set(client, recent);
     return false;
   }
+
   recent.push(now);
   globalRequests.push(now);
   requestsByClient.set(client, recent);
@@ -49,10 +51,10 @@ function withinRateLimit(request: Request) {
 async function readJsonBody(request: Request) {
   const advertisedLength = Number(request.headers.get("content-length") ?? 0);
   if (Number.isFinite(advertisedLength) && advertisedLength > MAX_REQUEST_BYTES) {
-    throw new QuestionRequestError("Request body is too large", 413);
+    throw new RecallEvaluationRequestError("Request body is too large", 413);
   }
 
-  if (!request.body) throw new QuestionRequestError("Request body is required");
+  if (!request.body) throw new RecallEvaluationRequestError("Request body is required");
   const reader = request.body.getReader();
   const decoder = new TextDecoder("utf-8", { fatal: true });
   let size = 0;
@@ -64,39 +66,47 @@ async function readJsonBody(request: Request) {
       size += value.byteLength;
       if (size > MAX_REQUEST_BYTES) {
         await reader.cancel();
-        throw new QuestionRequestError("Request body is too large", 413);
+        throw new RecallEvaluationRequestError("Request body is too large", 413);
       }
       body += decoder.decode(value, { stream: true });
     }
     body += decoder.decode();
   } catch (error) {
-    if (error instanceof QuestionRequestError) throw error;
-    throw new QuestionRequestError("Invalid request body");
+    if (error instanceof RecallEvaluationRequestError) throw error;
+    throw new RecallEvaluationRequestError("Invalid request body");
   }
 
   try {
     return JSON.parse(body) as unknown;
   } catch {
-    throw new QuestionRequestError("Invalid JSON body");
+    throw new RecallEvaluationRequestError("Invalid JSON body");
   }
+}
+
+function responseHeaders() {
+  return {
+    "Cache-Control": "no-store",
+    "X-Content-Type-Options": "nosniff",
+  };
 }
 
 export async function POST(request: Request) {
   if (!withinRateLimit(request)) {
-    return Response.json({ questions: [] }, { status: 429, headers: { "Retry-After": "60" } });
+    return Response.json(
+      { error: "rate_limited" },
+      { status: 429, headers: { ...responseHeaders(), "Retry-After": "60" } },
+    );
   }
+
   try {
     const input = await readJsonBody(request);
-    const questions = await generateQuestions(input);
-    return Response.json(
-      { questions },
-      { headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } },
-    );
+    const evaluation = await evaluateRecallAnswer(input);
+    return Response.json(evaluation, { headers: responseHeaders() });
   } catch (error) {
-    const status = error instanceof QuestionRequestError ? error.statusCode : 503;
+    const status = error instanceof RecallEvaluationRequestError ? error.statusCode : 503;
     return Response.json(
-      { questions: [] },
-      { status, headers: { "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" } },
+      { error: status === 413 ? "request_too_large" : status === 400 ? "invalid_request" : "evaluation_unavailable" },
+      { status, headers: responseHeaders() },
     );
   }
 }
