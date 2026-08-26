@@ -188,9 +188,9 @@ function directedDistance(from: number, to: number, direction: number) {
 function createWorld(): WorldState {
   return {
     rings: [
-      { angle: 0.4, baseSpeed: 0.16, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
-      { angle: -0.8, baseSpeed: -0.21, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
-      { angle: 1.2, baseSpeed: 0.28, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
+      { angle: 0.4, baseSpeed: 0.064, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
+      { angle: -0.8, baseSpeed: -0.084, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
+      { angle: 1.2, baseSpeed: 0.112, permanentScale: 1, permanentDirection: 1, temporaryMultiplier: 1, temporaryUntil: 0, reversedUntil: 0, frozenUntil: 0 },
     ],
     player: { ringIndex: 1, localAngle: 2.8, mode: "ring", spokeIndex: 0, health: 5, invulnerableUntil: 18 },
     terminals: { A: false, B: false, C: false },
