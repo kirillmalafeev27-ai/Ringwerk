@@ -64,14 +64,16 @@ test("source keeps the fast but readable game rules explicit", async () => {
 
   assert.match(page, /const simulationDelta = delta/);
   assert.match(page, /world\.phaseTime -= simulationDelta/);
-  assert.match(page, /IMPULSE_QUESTION_DECAY = 6\.6/);
-  assert.match(page, /IMPULSE_ACTION_DECAY = 9/);
+  assert.match(page, /STEP_ANGLE = TAU \/ 6/);
+  assert.match(page, /phaseTime: 180/);
+  assert.match(page, /IMPULSE_QUESTION_DECAY = 3\.3/);
+  assert.match(page, /IMPULSE_ACTION_DECAY = 4\.5/);
   assert.match(page, /ACTION_THRESHOLDS/);
   assert.match(page, /impulseRef\.current - requiredImpulse/);
   assert.match(page, /world\.spokeAngle = normalizeAngle/);
   assert.match(page, /ring\.angle = normalizeAngle/);
   assert.match(page, /type BonusId = "brake" \| "reverse" \| "overdrive" \| "shift" \| "blackout"/);
-  assert.match(page, /nextCombo % 3 === 0/);
+  assert.match(page, /questionNumber - 1/);
   assert.match(page, /current\.length < 2/);
   assert.doesNotMatch(page, /bonusDraft|chooseBonus/);
   assert.match(page, /Object\.values\(world\.terminals\)\.every\(Boolean\)/);

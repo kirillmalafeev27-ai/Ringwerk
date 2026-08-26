@@ -67,6 +67,14 @@ kbd {
   padding: clamp(13px, 1.7vw, 26px);
 }
 
+.game-shell:not([data-phase="setup"]) {
+  height: 100svh;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
 .topbar {
   width: min(100%, 1600px);
   min-height: 66px;
@@ -192,6 +200,23 @@ h1 {
   grid-template-columns: minmax(0, 1.58fr) minmax(380px, 0.72fr);
   gap: 12px;
   align-items: start;
+}
+
+.game-shell:not([data-phase="setup"]) .game-layout {
+  height: 100%;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.game-shell:not([data-phase="setup"]) .arena-panel,
+.game-shell:not([data-phase="setup"]) .control-panel {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
+}
+
+.game-shell:not([data-phase="setup"]) .game-footer {
+  display: none;
 }
 
 .learning-entry {
@@ -823,9 +848,10 @@ h1 {
 .control-panel {
   max-height: min(77svh, 830px);
   display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
   gap: 9px;
   padding-right: 3px;
-  overflow-y: auto;
+  overflow: hidden;
   scrollbar-width: thin;
   scrollbar-color: rgba(53, 224, 193, 0.28) transparent;
 }
@@ -929,6 +955,7 @@ h1 {
 
 .quiz-card {
   position: relative;
+  min-height: 0;
   overflow: hidden;
   padding: 15px;
   background:
@@ -1920,12 +1947,12 @@ h1 {
   }
 
   .answer-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .answer-grid button {
-    min-height: 52px;
-    font-size: 0.78rem;
+    min-height: 44px;
+    font-size: 0.72rem;
   }
 
   .recall-form > div {
@@ -2023,14 +2050,29 @@ h1 {
     white-space: normal;
   }
 
-  .game-layout {
+  .game-shell:not([data-phase="setup"]) .game-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) clamp(145px, 26dvh, 220px);
+    gap: 8px;
   }
 
-  .arena-panel {
+  .game-shell:is([data-phase="briefing"], [data-phase="won"], [data-phase="lost"]) .game-layout {
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .game-shell:is([data-phase="briefing"], [data-phase="won"], [data-phase="lost"]) .control-panel {
+    display: none;
+  }
+
+  .game-shell:not([data-phase="setup"]) .arena-panel {
     order: 2;
-    height: clamp(330px, 44svh, 420px);
-    min-height: 330px;
+    height: 100%;
+    min-height: 0;
+  }
+
+  .game-shell:not([data-phase="setup"]) .arena-toolbar,
+  .game-shell:not([data-phase="setup"]) .ring-readout {
+    display: none;
   }
 
   .briefing-overlay {
@@ -2038,24 +2080,117 @@ h1 {
     padding: 16px;
   }
 
-  .control-panel {
+  .game-shell:not([data-phase="setup"]) .control-panel {
     order: 1;
-    max-height: none;
-    display: flex;
-    flex-direction: column;
-    overflow: visible;
+    height: 100%;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 7px;
+    padding-right: 0;
+    overflow: hidden;
   }
 
-  .quiz-card {
-    order: 1;
+  .game-shell:not([data-phase="setup"]) .mission-card {
+    display: none;
   }
 
-  .mission-card {
-    order: 2;
+  .game-shell:not([data-phase="setup"]) .inventory-card,
+  .game-shell:not([data-phase="setup"]) .quiz-card {
+    padding: 8px 9px;
   }
 
-  .inventory-card {
-    order: 3;
+  .inventory-head {
+    gap: 8px;
+  }
+
+  .inventory-head > div > strong,
+  .game-shell:not([data-phase="setup"]) .quiz-focus,
+  .impulse-thresholds {
+    display: none;
+  }
+
+  .spoke-meter {
+    width: 78px;
+  }
+
+  .inventory-slots {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 5px;
+  }
+
+  .inventory-slots button {
+    min-height: 44px;
+    gap: 5px;
+    padding: 4px 5px;
+  }
+
+  .inventory-slots .pulse-button {
+    grid-column: auto;
+  }
+
+  .impulse-meter {
+    margin-top: 5px;
+    padding: 5px 7px;
+  }
+
+  .quiz-instruction {
+    margin-top: 6px;
+  }
+
+  .quiz-card h2 {
+    margin-block: 3px 4px;
+    font-size: 1.18rem;
+  }
+
+  .quiz-translation {
+    max-height: 1.4em;
+    overflow: hidden;
+    margin-bottom: 5px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .answer-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .answer-grid button {
+    min-height: 44px;
+    padding: 4px 6px;
+    font-size: 0.66rem;
+  }
+
+  .recall-form > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .recall-form button {
+    min-height: 44px;
+  }
+
+  .movement-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+  }
+
+  .movement-grid button,
+  .movement-grid .spoke-action,
+  .movement-grid .jump-action {
+    min-height: 44px;
+    font-size: 0.55rem;
+  }
+
+  .movement-grid .spoke-action,
+  .movement-grid .jump-action {
+    grid-column: span 2;
+  }
+
+  .quiz-card.is-action .quiz-instruction,
+  .quiz-card.is-action h2,
+  .quiz-card.is-action .quiz-translation {
+    display: none;
   }
 
   .rule-strip {
@@ -2104,13 +2239,126 @@ h1 {
 
   .arena-panel,
   .control-panel {
-    height: calc(100svh - 98px);
-    min-height: 540px;
+    height: 100%;
+    min-height: 0;
     max-height: none;
   }
 
   .game-footer {
     display: none;
+  }
+}
+
+@media (max-height: 700px) and (min-width: 561px) {
+  .game-shell:not([data-phase="setup"]) {
+    padding: 6px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .topbar {
+    min-height: 42px;
+    margin-bottom: 6px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .brand-kicker,
+  .game-shell:not([data-phase="setup"]) .mission-card,
+  .game-shell:not([data-phase="setup"]) .quiz-focus,
+  .game-shell:not([data-phase="setup"]) .inventory-head > div > strong {
+    display: none;
+  }
+
+  .game-shell:not([data-phase="setup"]) h1 {
+    font-size: 2.1rem;
+  }
+
+  .game-shell:not([data-phase="setup"]) .game-layout {
+    gap: 8px;
+  }
+
+  .game-shell:is([data-phase="briefing"], [data-phase="won"], [data-phase="lost"]) .game-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .game-shell:is([data-phase="briefing"], [data-phase="won"], [data-phase="lost"]) .control-panel {
+    display: none;
+  }
+
+  .game-shell:not([data-phase="setup"]) .control-panel {
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 6px;
+    padding-right: 0;
+  }
+
+  .game-shell:not([data-phase="setup"]) .inventory-card,
+  .game-shell:not([data-phase="setup"]) .quiz-card {
+    padding: 7px 9px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .inventory-slots {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 4px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .inventory-slots .pulse-button {
+    grid-column: auto;
+  }
+
+  .game-shell:not([data-phase="setup"]) .inventory-slots button {
+    min-height: 40px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .impulse-meter {
+    margin-top: 5px;
+    padding: 5px 7px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-instruction {
+    margin-top: 5px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-card h2 {
+    margin-block: 2px 3px;
+    font-size: 1.18rem;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-translation {
+    max-height: 1.35em;
+    overflow: hidden;
+    margin-bottom: 4px;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+
+  .game-shell:not([data-phase="setup"]) .answer-grid button {
+    min-height: 40px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .recall-form > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .game-shell:not([data-phase="setup"]) .movement-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .game-shell:not([data-phase="setup"]) .movement-grid button,
+  .game-shell:not([data-phase="setup"]) .movement-grid .spoke-action,
+  .game-shell:not([data-phase="setup"]) .movement-grid .jump-action {
+    min-height: 40px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .movement-grid .spoke-action,
+  .game-shell:not([data-phase="setup"]) .movement-grid .jump-action {
+    grid-column: span 2;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-card.is-action .quiz-instruction,
+  .game-shell:not([data-phase="setup"]) .quiz-card.is-action h2,
+  .game-shell:not([data-phase="setup"]) .quiz-card.is-action .quiz-translation {
+    display: none;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-feedback {
+    min-height: 22px;
   }
 }
 

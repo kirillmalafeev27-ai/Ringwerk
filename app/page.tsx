@@ -17,12 +17,12 @@ import {
 import { useQuestionPool } from "./use-question-pool";
 
 const TAU = Math.PI * 2;
-const STEP_ANGLE = TAU / 18;
+const STEP_ANGLE = TAU / 6;
 const RING_NAMES = ["ВНЕШНИЙ", "СРЕДНИЙ", "ВНУТРЕННИЙ"] as const;
 const RING_LOCATIVE = ["внешнем", "среднем", "внутреннем"] as const;
 const RING_COLORS = ["#35e0c1", "#47b8ff", "#f5d94e"] as const;
-const IMPULSE_QUESTION_DECAY = 6.6;
-const IMPULSE_ACTION_DECAY = 9;
+const IMPULSE_QUESTION_DECAY = 3.3;
+const IMPULSE_ACTION_DECAY = 4.5;
 const ACTION_THRESHOLDS = {
   "step-left": 10,
   "step-right": 10,
@@ -195,7 +195,7 @@ function createWorld(): WorldState {
     player: { ringIndex: 1, localAngle: 2.8, mode: "ring", spokeIndex: 0, health: 5, invulnerableUntil: 18 },
     terminals: { A: false, B: false, C: false },
     elapsed: 0,
-    phaseTime: 90,
+    phaseTime: 180,
     spokeAngle: 1.02,
     spokeSpeed: 0.24,
     spokeCount: 3,
@@ -803,9 +803,9 @@ export default function Home() {
     (id: TerminalId) => {
       const world = worldRef.current;
       const count = Object.values(world.terminals).filter(Boolean).length;
-      if (count === 1) world.phaseTime = Math.max(world.phaseTime, 54);
-      if (count === 2) world.phaseTime = Math.max(world.phaseTime, 38);
-      if (count === 3) world.phaseTime = Math.max(world.phaseTime, 28);
+      if (count === 1) world.phaseTime = Math.max(world.phaseTime, 108);
+      if (count === 2) world.phaseTime = Math.max(world.phaseTime, 76);
+      if (count === 3) world.phaseTime = Math.max(world.phaseTime, 56);
       world.player.health = Math.min(5, world.player.health + 1);
 
       if (id === "A") {
@@ -1099,27 +1099,25 @@ export default function Home() {
         world.score += 120 + nextCombo * 12 + Math.round(impulseRef.current);
         feedbackRef.current = "correct";
         setFeedback("correct");
-        if (nextCombo % 3 === 0) {
-          const bonusIds = Object.keys(BONUSES) as BonusId[];
-          const bonusId = bonusIds[(questionNumber + nextCombo / 3 - 1) % bonusIds.length];
-          const current = inventoryRef.current;
-          const duplicateIndex = current.findIndex((bonus) => bonus.id === bonusId);
-          let next = current;
-          if (duplicateIndex >= 0) {
-            next = current.map((bonus, index) =>
-              index === duplicateIndex ? { ...bonus, level: 2 as const } : bonus,
-            );
-            showBanner("СЕРИЯ ×" + nextCombo + " · " + BONUSES[bonusId].name + " УСИЛЕН");
-          } else if (current.length < 2) {
-            next = [...current, { id: bonusId, level: 1 }];
-            showBanner("СЕРИЯ ×" + nextCombo + " · " + BONUSES[bonusId].name + " В СЛОТЕ");
-          } else {
-            world.score += 120;
-            showBanner("СЕРИЯ ×" + nextCombo + " · СЛОТЫ ПОЛНЫ · +120");
-          }
-          inventoryRef.current = next;
-          setInventory(next);
+        const bonusIds = Object.keys(BONUSES) as BonusId[];
+        const bonusId = bonusIds[(questionNumber - 1) % bonusIds.length];
+        const current = inventoryRef.current;
+        const duplicateIndex = current.findIndex((bonus) => bonus.id === bonusId);
+        let next = current;
+        if (duplicateIndex >= 0) {
+          next = current.map((bonus, index) =>
+            index === duplicateIndex ? { ...bonus, level: 2 as const } : bonus,
+          );
+          showBanner("ВЕРНО · " + BONUSES[bonusId].name + " УСИЛЕН");
+        } else if (current.length < 2) {
+          next = [...current, { id: bonusId, level: 1 }];
+          showBanner("ВЕРНО · " + BONUSES[bonusId].name + " В СЛОТЕ");
+        } else {
+          next = [...current.slice(1), { id: bonusId, level: 1 }];
+          showBanner("ВЕРНО · " + BONUSES[bonusId].name + " ЗАМЕНИЛ СТАРЫЙ БОНУС");
         }
+        inventoryRef.current = next;
+        setInventory(next);
         const nextResolution = { action: true, bonus: false };
         resolutionRef.current = nextResolution;
         setResolution(nextResolution);
@@ -1256,10 +1254,7 @@ export default function Home() {
 
   const activateStoredBonus = useCallback(
     (index: number) => {
-      if (phaseRef.current !== "playing" || !resolutionRef.current.action) {
-        showBanner("ПРОТОКОЛ ТРЕБУЕТ ЗАРЯЖЕННЫЙ ИМПУЛЬС");
-        return;
-      }
+      if (phaseRef.current !== "playing") return;
       const stored = inventoryRef.current[index];
       if (!stored) return;
       const cost = BONUSES[stored.id].impulseCost + (stored.level === 2 ? 8 : 0);
@@ -1650,7 +1645,7 @@ export default function Home() {
                 <ol className="rule-strip">
                   <li><b>01</b><span><strong>ОТВЕТЬ</strong>импульс уже сгорает</span></li>
                   <li><b>02</b><span><strong>РЕШИ</strong>ждать окно или идти сейчас</span></li>
-                  <li><b>03</b><span><strong>СЕРИЯ ×3</strong>протокол тратит часть заряда</span></li>
+                  <li><b>03</b><span><strong>БОНУС ЗА ВЕРНЫЙ</strong>протокол тратит часть заряда</span></li>
                 </ol>
                 <div className="briefing-actions">
                   <button className="primary-button" type="button" onClick={startGame}>
@@ -1729,6 +1724,50 @@ export default function Home() {
             </div>
           </section>
 
+          <section className="inventory-card" aria-labelledby="inventory-heading">
+            <div className="inventory-head">
+              <div>
+                <span>БОНУС ЗА КАЖДЫЙ ВЕРНЫЙ</span>
+                <strong id="inventory-heading">Можно применить в любой момент забега · тратит импульс</strong>
+              </div>
+              <div className="spoke-meter">
+                <span>СПИЦА {Math.round(hud.charge)}%</span>
+                <i><b style={{ width: hud.charge + "%" }} /></i>
+              </div>
+            </div>
+            <div className="inventory-slots">
+              {[0, 1].map((slot) => {
+                const stored = inventory[slot];
+                const definition = stored ? BONUSES[stored.id] : null;
+                return (
+                  <button
+                    key={slot}
+                    type="button"
+                    onClick={() => activateStoredBonus(slot)}
+                    disabled={!stored || phase !== "playing" || impulse < (definition?.impulseCost ?? 101) + (stored?.level === 2 ? 8 : 0)}
+                    style={definition ? ({ "--bonus-color": definition.color } as React.CSSProperties) : undefined}
+                  >
+                    <kbd>{slot === 0 ? "Z" : "X"}</kbd>
+                    {definition ? (
+                      <><b>{definition.mark}</b><span><strong>{definition.name}{stored.level === 2 ? " ×2" : ""} · −{definition.impulseCost + (stored.level === 2 ? 8 : 0)}%</strong>{definition.effect}</span></>
+                    ) : (
+                      <span className="empty-slot">ПУСТО</span>
+                    )}
+                  </button>
+                );
+              })}
+              <button
+                className="pulse-button"
+                type="button"
+                onClick={releaseSpokePulse}
+                disabled={hud.charge < 99.5 || phase !== "playing"}
+              >
+                <b>ϟ</b>
+                <span><strong>ИМПУЛЬС</strong>разворот всех колец</span>
+              </button>
+            </div>
+          </section>
+
           <section
             className={
               "quiz-card " +
@@ -1759,7 +1798,7 @@ export default function Home() {
               aria-valuemax={100}
               aria-valuenow={roundedImpulse}
             >
-              <div><span>ИМПУЛЬС</span><strong>{roundedImpulse}%</strong><small>{resolution.action ? "−9%/с" : "−6.6%/с"}</small></div>
+              <div><span>ИМПУЛЬС</span><strong>{roundedImpulse}%</strong><small>{resolution.action ? "−4.5%/с" : "−3.3%/с"}</small></div>
               <i><b style={{ width: impulse + "%" }} /><em className="mark-10" /><em className="mark-40" /><em className="mark-55" /><em className="mark-80" /></i>
               <div className="impulse-thresholds"><span>ШАГ 10</span><span>ПЕРЕХОД 40</span><span>СПИЦА 55</span><span>ПРЫЖОК 80</span></div>
             </div>
@@ -1879,49 +1918,6 @@ export default function Home() {
             </div>
           </section>
 
-          <section className="inventory-card" aria-labelledby="inventory-heading">
-            <div className="inventory-head">
-              <div>
-                <span>ПРОТОКОЛ КАЖДЫЕ 3 ВЕРНЫХ</span>
-                <strong id="inventory-heading">Тратит импульс · основное движение остаётся</strong>
-              </div>
-              <div className="spoke-meter">
-                <span>СПИЦА {Math.round(hud.charge)}%</span>
-                <i><b style={{ width: hud.charge + "%" }} /></i>
-              </div>
-            </div>
-            <div className="inventory-slots">
-              {[0, 1].map((slot) => {
-                const stored = inventory[slot];
-                const definition = stored ? BONUSES[stored.id] : null;
-                return (
-                  <button
-                    key={slot}
-                    type="button"
-                    onClick={() => activateStoredBonus(slot)}
-                    disabled={!stored || phase !== "playing" || !resolution.action || impulse < (definition?.impulseCost ?? 101) + (stored?.level === 2 ? 8 : 0)}
-                    style={definition ? ({ "--bonus-color": definition.color } as React.CSSProperties) : undefined}
-                  >
-                    <kbd>{slot === 0 ? "Z" : "X"}</kbd>
-                    {definition ? (
-                      <><b>{definition.mark}</b><span><strong>{definition.name}{stored.level === 2 ? " ×2" : ""} · −{definition.impulseCost + (stored.level === 2 ? 8 : 0)}%</strong>{definition.effect}</span></>
-                    ) : (
-                      <span className="empty-slot">ПУСТО</span>
-                    )}
-                  </button>
-                );
-              })}
-              <button
-                className="pulse-button"
-                type="button"
-                onClick={releaseSpokePulse}
-                disabled={hud.charge < 99.5 || phase !== "playing"}
-              >
-                <b>ϟ</b>
-                <span><strong>ИМПУЛЬС</strong>разворот всех колец</span>
-              </button>
-            </div>
-          </section>
         </aside>
       </section>
       )}
