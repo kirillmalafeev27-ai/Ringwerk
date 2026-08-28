@@ -47,6 +47,13 @@ AITunnel вызывается только на сервере: для гене�
 
 Контейнер собирает отдельный vinext standalone runtime с `DEPLOY_TARGET=node`, слушает `0.0.0.0:$PORT` и не содержит `.env`-файлы. Обычная сборка без `DEPLOY_TARGET=node` остаётся Cloudflare/Sites-сборкой.
 
+Если сервис собирается из репозитория, а не из `Dockerfile` (buildpack/Git-сборка), то:
+
+- build command: `npm ci --no-audit --no-fund && npm run build:node`;
+- run command: `npm run start:northflank`.
+
+`npm run start:northflank` подставляет `NODE_ENV=production`, `HOST=0.0.0.0` и `PORT=3000`, если платформа их не задала, и сам собирает standalone-выход, если сборка прошла без `DEPLOY_TARGET=node`.
+
 ## Проверка
 
 ```bash

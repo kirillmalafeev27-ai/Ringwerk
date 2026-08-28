@@ -8,8 +8,10 @@
   "scripts": {
     "dev": "vinext dev",
     "build": "vinext build",
+    "build:node": "node scripts/build-node.mjs",
     "start": "vinext start",
     "start:node": "node dist/standalone/server.js",
+    "start:northflank": "node scripts/start-northflank.mjs",
     "test": "node scripts/test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"
