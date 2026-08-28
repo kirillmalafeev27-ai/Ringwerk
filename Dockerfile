@@ -7,7 +7,7 @@ FROM dependencies AS build
 WORKDIR /app
 COPY . .
 ENV DEPLOY_TARGET=node
-RUN npm run build
+RUN npm run build:node
 
 FROM node:24.19.0-bookworm-slim AS runtime
 WORKDIR /app

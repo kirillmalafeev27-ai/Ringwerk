@@ -63,11 +63,13 @@ kbd {
 }
 
 .game-shell {
+  min-height: 100vh;
   min-height: 100svh;
   padding: clamp(13px, 1.7vw, 26px);
 }
 
 .game-shell:not([data-phase="setup"]) {
+  height: 100vh;
   height: 100svh;
   min-height: 0;
   display: grid;
@@ -221,6 +223,7 @@ h1 {
 
 .learning-entry {
   width: min(100%, 1480px);
+  min-height: min(790px, calc(100vh - 120px));
   min-height: min(790px, calc(100svh - 120px));
   margin: 0 auto;
   display: grid;
@@ -472,6 +475,7 @@ h1 {
 }
 
 .arena-panel {
+  height: min(77vh, 830px);
   height: min(77svh, 830px);
   min-height: 610px;
   display: grid;
@@ -481,6 +485,7 @@ h1 {
 }
 
 .arena-toolbar {
+  grid-row: 1;
   min-height: 42px;
   display: flex;
   align-items: center;
@@ -537,8 +542,9 @@ h1 {
 }
 
 .canvas-wrap {
+  grid-row: 2;
   position: relative;
-  min-height: 0;
+  min-height: 320px;
   overflow: hidden;
   isolation: isolate;
   background: #071311;
@@ -793,6 +799,7 @@ h1 {
 }
 
 .ring-readout {
+  grid-row: 3;
   min-height: 48px;
   display: flex;
   align-items: stretch;
@@ -846,6 +853,7 @@ h1 {
 }
 
 .control-panel {
+  max-height: min(77vh, 830px);
   max-height: min(77svh, 830px);
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
@@ -1771,11 +1779,13 @@ h1 {
   }
 
   .arena-panel {
+    height: min(77vh, 720px);
     height: min(77svh, 720px);
     min-height: 500px;
   }
 
   .control-panel {
+    max-height: min(77vh, 720px);
     max-height: min(77svh, 720px);
     overflow-y: auto;
   }
@@ -2052,6 +2062,7 @@ h1 {
 
   .game-shell:not([data-phase="setup"]) .game-layout {
     grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) clamp(145px, 26vh, 220px);
     grid-template-rows: minmax(0, 1fr) clamp(145px, 26dvh, 220px);
     gap: 8px;
   }
@@ -2068,6 +2079,10 @@ h1 {
     order: 2;
     height: 100%;
     min-height: 0;
+  }
+
+  .game-shell:not([data-phase="setup"]) .canvas-wrap {
+    min-height: 130px;
   }
 
   .game-shell:not([data-phase="setup"]) .arena-toolbar,
@@ -2272,6 +2287,10 @@ h1 {
 
   .game-shell:not([data-phase="setup"]) .game-layout {
     gap: 8px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .canvas-wrap {
+    min-height: 220px;
   }
 
   .game-shell:is([data-phase="briefing"], [data-phase="won"], [data-phase="lost"]) .game-layout {

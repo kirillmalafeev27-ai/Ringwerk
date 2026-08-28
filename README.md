@@ -44,6 +44,7 @@ AITunnel вызывается только на сервере: для гене�
 - runtime secret: `AITUNNEL_API_KEY`;
 - необязательные runtime variables перечислены в `.env.example`;
 - одна реплика для in-memory кэша пакетов (при масштабировании нужен общий Redis-lock/cache).
+- run command можно не задавать (`node server.js` из `CMD`), но `npm start` и `npm run start:northflank` внутри образа тоже работают.
 
 Контейнер собирает отдельный vinext standalone runtime с `DEPLOY_TARGET=node`, слушает `0.0.0.0:$PORT` и не содержит `.env`-файлы. Обычная сборка без `DEPLOY_TARGET=node` остаётся Cloudflare/Sites-сборкой.
 
