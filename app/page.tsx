@@ -21,13 +21,18 @@ const STEP_ANGLE = TAU / 6;
 const RING_NAMES = ["ВНЕШНИЙ", "СРЕДНИЙ", "ВНУТРЕННИЙ"] as const;
 const RING_LOCATIVE = ["внешнем", "среднем", "внутреннем"] as const;
 const RING_COLORS = ["#35e0c1", "#47b8ff", "#f5d94e"] as const;
+const TERMINAL_TIME_BONUS = 60;
+const TERMINAL_REACH = 0.24;
+// A step jumps a whole sector at once, so a crossing may never land inside
+// TERMINAL_REACH. Allow a sweep slightly wider than one step.
+const TERMINAL_SWEEP_LIMIT = STEP_ANGLE * 1.5;
 const IMPULSE_QUESTION_DECAY = 3.3;
 const IMPULSE_ACTION_DECAY = 4.5;
 const ACTION_THRESHOLDS = {
   "step-left": 10,
   "step-right": 10,
-  outer: 40,
-  inner: 40,
+  outer: 25,
+  inner: 25,
   spoke: 55,
   jump: 80,
 } as const;
@@ -84,6 +89,7 @@ type WorldState = {
     invulnerableUntil: number;
   };
   terminals: Record<TerminalId, boolean>;
+  terminalOffsets: Record<TerminalId, number | null>;
   elapsed: number;
   phaseTime: number;
   spokeAngle: number;
@@ -194,6 +200,7 @@ function createWorld(): WorldState {
     ],
     player: { ringIndex: 1, localAngle: 2.8, mode: "ring", spokeIndex: 0, health: 5, invulnerableUntil: 18 },
     terminals: { A: false, B: false, C: false },
+    terminalOffsets: { A: null, B: null, C: null },
     elapsed: 0,
     phaseTime: 180,
     spokeAngle: 1.02,
@@ -803,6 +810,7 @@ export default function Home() {
     (id: TerminalId) => {
       const world = worldRef.current;
       const count = Object.values(world.terminals).filter(Boolean).length;
+      world.phaseTime += TERMINAL_TIME_BONUS;
       if (count === 1) world.phaseTime = Math.max(world.phaseTime, 108);
       if (count === 2) world.phaseTime = Math.max(world.phaseTime, 76);
       if (count === 3) world.phaseTime = Math.max(world.phaseTime, 56);
@@ -841,7 +849,7 @@ export default function Home() {
       showBanner(
         count === 3
           ? "КОНТУР СОБРАН · ВЫХОД ОТКРЫТ"
-          : "УЗЕЛ " + id + ": " + terminal.effect + " · " + terminal.cost,
+          : "УЗЕЛ " + id + ": +" + TERMINAL_TIME_BONUS + "с · " + terminal.effect + " · " + terminal.cost,
       );
     },
     [playTone, showBanner],
@@ -906,10 +914,23 @@ export default function Home() {
         world.flash = Math.max(0, world.flash - delta * 2.2);
 
         for (const terminal of TERMINALS) {
-          if (world.terminals[terminal.id] || world.player.ringIndex !== terminal.ring) continue;
+          if (world.terminals[terminal.id] || world.player.ringIndex !== terminal.ring) {
+            world.terminalOffsets[terminal.id] = null;
+            continue;
+          }
           const terminalAngle = normalizeAngle(world.rings[terminal.ring].angle + terminal.localAngle);
-          if (angleDistance(getPlayerWorldAngle(world), terminalAngle) < 0.24) {
+          const offset = normalizeAngle(getPlayerWorldAngle(world) - terminalAngle);
+          const previous = world.terminalOffsets[terminal.id];
+          world.terminalOffsets[terminal.id] = offset;
+          // Moving past the node counts as well: a step that overshoots it
+          // flips the side the player is on without ever coming close.
+          const sweptThrough =
+            previous !== null &&
+            previous * offset < 0 &&
+            Math.abs(previous - offset) < TERMINAL_SWEEP_LIMIT;
+          if (Math.abs(offset) < TERMINAL_REACH || sweptThrough) {
             world.terminals[terminal.id] = true;
+            world.terminalOffsets[terminal.id] = null;
             callbacksRef.current.onTerminal(terminal.id);
           }
         }
@@ -1634,8 +1655,9 @@ export default function Home() {
                   <h2>Мир не ждёт<br />твоего ответа.</h2>
                   <p>
                     С появлением теста загорается импульс 100% и сразу начинает тухнуть.
-                    Верный ответ сохраняет остаток: шаг требует 10%, переход — 40%,
-                    спица — 55%. После ответа механизм не замедляется.
+                    Верный ответ сохраняет остаток: шаг требует 10%, переход — 25%,
+                    спица — 55%. Каждый активированный узел добавляет 60 секунд
+                    заряда. После ответа механизм не замедляется.
                   </p>
                   <div className="briefing-focus">
                     <b>{sessionSettings.level} · {sessionSettings.mode === "recall" ? "ВОСПРОИЗВЕДЕНИЕ" : "УЗНАВАНИЕ"}</b>
@@ -1799,8 +1821,8 @@ export default function Home() {
               aria-valuenow={roundedImpulse}
             >
               <div><span>ИМПУЛЬС</span><strong>{roundedImpulse}%</strong><small>{resolution.action ? "−4.5%/с" : "−3.3%/с"}</small></div>
-              <i><b style={{ width: impulse + "%" }} /><em className="mark-10" /><em className="mark-40" /><em className="mark-55" /><em className="mark-80" /></i>
-              <div className="impulse-thresholds"><span>ШАГ 10</span><span>ПЕРЕХОД 40</span><span>СПИЦА 55</span><span>ПРЫЖОК 80</span></div>
+              <i><b style={{ width: impulse + "%" }} /><em className="mark-10" /><em className="mark-25" /><em className="mark-55" /><em className="mark-80" /></i>
+              <div className="impulse-thresholds"><span>ШАГ 10</span><span>ПЕРЕХОД 25</span><span>СПИЦА 55</span><span>ПРЫЖОК 80</span></div>
             </div>
             <p className="quiz-instruction">{question.prompt}</p>
             <h2 id="quiz-heading" lang="de">{question.context}</h2>
@@ -1864,15 +1886,15 @@ export default function Home() {
                   {hud.mode === "ring" && (
                     <>
                       <button type="button" onClick={() => performAction("step-left")} disabled={impulse < 10}><kbd>A / ←</kbd><span>ШАГ ↺</span><small>≥10%</small></button>
-                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0 || impulse < 40}><kbd>W / ↑</kbd><span>НАРУЖУ</span><small>≥40%</small></button>
-                      <button type="button" onClick={() => performAction("inner")} disabled={(hud.ringIndex === 2 && !exitUnlocked) || impulse < 40}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span><small>≥40%</small></button>
+                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0 || impulse < 25}><kbd>W / ↑</kbd><span>НАРУЖУ</span><small>≥25%</small></button>
+                      <button type="button" onClick={() => performAction("inner")} disabled={(hud.ringIndex === 2 && !exitUnlocked) || impulse < 25}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ВНУТРЬ"}</span><small>≥25%</small></button>
                       <button type="button" onClick={() => performAction("step-right")} disabled={impulse < 10}><kbd>D / →</kbd><span>ШАГ ↻</span><small>≥10%</small></button>
                     </>
                   )}
                   {hud.mode === "spoke" && (
                     <>
-                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0 || impulse < 40}><kbd>W / ↑</kbd><span>ПО СПИЦЕ НАРУЖУ</span><small>≥40%</small></button>
-                      <button type="button" onClick={() => performAction("inner")} disabled={(hud.ringIndex === 2 && !exitUnlocked) || impulse < 40}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span><small>≥40%</small></button>
+                      <button type="button" onClick={() => performAction("outer")} disabled={hud.ringIndex === 0 || impulse < 25}><kbd>W / ↑</kbd><span>ПО СПИЦЕ НАРУЖУ</span><small>≥25%</small></button>
+                      <button type="button" onClick={() => performAction("inner")} disabled={(hud.ringIndex === 2 && !exitUnlocked) || impulse < 25}><kbd>S / ↓</kbd><span>{hud.ringIndex === 2 && exitUnlocked ? "В ВЫХОД" : "ПО СПИЦЕ ВНУТРЬ"}</span><small>≥25%</small></button>
                     </>
                   )}
                   <button

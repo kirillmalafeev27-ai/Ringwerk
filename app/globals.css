@@ -1132,7 +1132,7 @@ h1 {
 }
 
 .impulse-meter .mark-10 { --mark: 10%; }
-.impulse-meter .mark-40 { --mark: 40%; }
+.impulse-meter .mark-25 { --mark: 25%; }
 .impulse-meter .mark-55 { --mark: 55%; }
 .impulse-meter .mark-80 { --mark: 80%; }
 
