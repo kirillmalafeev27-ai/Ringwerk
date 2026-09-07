@@ -23,6 +23,9 @@ const RING_NAMES = ["ВНЕШНИЙ", "СРЕДНИЙ", "ВНУТРЕННИЙ"] 
 const RING_LOCATIVE = ["внешнем", "среднем", "внутреннем"] as const;
 const RING_COLORS = ["#35e0c1", "#47b8ff", "#f5d94e"] as const;
 const TERMINAL_TIME_BONUS = 60;
+// The press pulses slowly enough to be read and waited out.
+const PRESS_CYCLE_SECONDS = 7.5;
+const PRESS_ACTIVE_LEVEL = -0.15;
 const TERMINAL_REACH = 0.24;
 // A step jumps a whole sector at once, so a crossing may never land inside
 // TERMINAL_REACH. Allow a sweep slightly wider than one step.
@@ -251,7 +254,9 @@ function nearestSpoke(world: WorldState) {
 function isHazardActive(world: WorldState, hazardId: string) {
   if (world.elapsed < world.hazardsDisabledUntil) return false;
   if (hazardId === "saw" && world.sawDisabled) return false;
-  if (hazardId === "press") return Math.sin(world.elapsed * 2.15) > -0.15;
+  if (hazardId === "press") {
+    return Math.sin((world.elapsed * TAU) / PRESS_CYCLE_SECONDS) > PRESS_ACTIVE_LEVEL;
+  }
   return true;
 }
 
