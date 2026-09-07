@@ -11,6 +11,9 @@ import {
   normalizeQuestion,
   questionFingerprint,
   questionHistoryLabel,
+  usesEveryFragment,
+  wordOrderFragments,
+  wordOrderInstruction,
   type GameQuestion,
 } from "@/lib/questions";
 import { getRuntimeEnvironment } from "@/server/runtime-env";
@@ -148,8 +151,51 @@ export function isQuestionGenerationReady() {
   return Boolean(config.key && config.baseUrl && config.models.length && typeof fetch === "function");
 }
 
+const GAP_EXAMPLE = {
+  prompt: "Вставьте правильную немецкую форму.",
+  context: "Maria ___ jeden Morgen Kaffee.",
+  translation: "Мария пьёт кофе каждое утро.",
+  options: ["trinkt", "trinken", "trinke", "trinkst"],
+  correct: 0,
+  correctAnswer: "trinkt",
+  rule: "Для sie в Präsens используется форма trinkt.",
+};
+
+function wordOrderExample(prompt: string, isSubordinate: boolean) {
+  return isSubordinate
+    ? {
+      prompt,
+      context: "Ich bleibe zu Hause, / weil / ich / heute / krank / bin",
+      translation: "Я остаюсь дома, потому что сегодня болен.",
+      options: [
+        "Ich bleibe zu Hause, weil ich heute krank bin.",
+        "Ich bleibe zu Hause, weil ich bin heute krank.",
+        "Ich bleibe zu Hause, weil bin ich heute krank.",
+        "Ich bleibe zu Hause, ich weil heute krank bin.",
+      ],
+      correct: 0,
+      correctAnswer: "Ich bleibe zu Hause, weil ich heute krank bin.",
+      rule: "После weil спрягаемый глагол уходит в конец придаточного.",
+    }
+    : {
+      prompt,
+      context: "am Wochenende / wir / besuchen / unsere Großeltern",
+      translation: "На выходных мы навещаем бабушку с дедушкой.",
+      options: [
+        "Am Wochenende besuchen wir unsere Großeltern.",
+        "Am Wochenende wir besuchen unsere Großeltern.",
+        "Wir unsere Großeltern besuchen am Wochenende.",
+        "Unsere Großeltern am Wochenende besuchen wir.",
+      ],
+      correct: 0,
+      correctAnswer: "Am Wochenende besuchen wir unsere Großeltern.",
+      rule: "В главном предложении спрягаемый глагол стоит на втором месте.",
+    };
+}
+
 function buildMessages(spec: QuestionSpec) {
-  const isWordOrder = /wortstellung/iu.test(spec.grammarTopic);
+  const wordOrderPrompt = wordOrderInstruction(spec.grammarTopic);
+  const isSubordinate = /nebensatz/iu.test(spec.grammarTopic);
   return [
     {
       role: "system",
@@ -174,10 +220,20 @@ function buildMessages(spec: QuestionSpec) {
         requirements: [
           "questions содержит ровно count объектов",
           "в каждом объекте ровно поля prompt, context, translation, options, correct, correctAnswer, rule",
-          "prompt — короткая ясная инструкция на русском языке",
-          isWordOrder
-            ? "context — немецкие слова для составления предложения по выбранной грамматике"
-            : "context — естественная немецкая фраза с ровно одним пропуском ___",
+          ...(wordOrderPrompt
+            ? [
+              `prompt — ровно строка "${wordOrderPrompt}"`,
+              "context — все части будущего предложения через ' / ' в перемешанном порядке, без финальной точки",
+              "options — четыре полных предложения из этих же частей: заглавная буква, точка, отличие только в порядке слов",
+              "правильный вариант использует каждую часть ровно один раз, три остальных однозначно нарушают порядок",
+              isSubordinate
+                ? "среди частей есть подчинительный союз, правильный вариант — придаточное предложение со спрягаемым глаголом в конце"
+                : "правильный вариант — главное предложение со спрягаемым глаголом на втором месте",
+            ]
+            : [
+              "prompt — короткая ясная инструкция на русском языке",
+              "context — естественная немецкая фраза с ровно одним пропуском ___",
+            ]),
           "translation — полный точный русский перевод законченной немецкой фразы",
           "options — ровно четыре различные немецкие формы без нумерации",
           "correct — индекс единственного правильного варианта от 0 до 3",
@@ -187,15 +243,9 @@ function buildMessages(spec: QuestionSpec) {
           "сложность не выше level, не повторяй exclude",
         ],
         output: {
-          questions: [{
-            prompt: "Вставьте правильную немецкую форму.",
-            context: "Maria ___ jeden Morgen Kaffee.",
-            translation: "Мария пьёт кофе каждое утро.",
-            options: ["trinkt", "trinken", "trinke", "trinkst"],
-            correct: 0,
-            correctAnswer: "trinkt",
-            rule: "Для sie в Präsens используется форма trinkt.",
-          }],
+          questions: [
+            wordOrderPrompt ? wordOrderExample(wordOrderPrompt, isSubordinate) : GAP_EXAMPLE,
+          ],
         },
       }),
     },
@@ -236,6 +286,7 @@ function parseResponse(raw: string, spec: QuestionSpec) {
     }
   }
 
+  const wordOrderPrompt = wordOrderInstruction(spec.grammarTopic);
   const excluded = new Set(spec.exclude.map((text) => text.normalize("NFKC").toLocaleLowerCase("de-DE")));
   const seen = new Set<string>();
   const questions: GameQuestion[] = [];
@@ -252,7 +303,13 @@ function parseResponse(raw: string, spec: QuestionSpec) {
     if (!/[А-Яа-яЁё]/u.test(question.translation)) continue;
     if (question.options.some((option) => /[А-Яа-яЁё]/u.test(option) || !/[A-Za-zÄÖÜäöüß]/u.test(option))) continue;
     const blankCount = question.context.split("___").length - 1;
-    if (/wortstellung/iu.test(spec.grammarTopic) ? blankCount > 1 : blankCount !== 1) continue;
+    if (wordOrderPrompt ? blankCount > 0 : blankCount !== 1) continue;
+    // The instruction promises that the listed parts add up to the answer, so
+    // drop word-order items where they do not.
+    if (wordOrderPrompt && (
+      wordOrderFragments(question.context).length < 3
+      || !usesEveryFragment(question.context, question.options[question.correct])
+    )) continue;
     const visibleText = `${question.prompt} ${question.context} ${question.translation} ${question.options.join(" ")} ${question.rule}`;
     if (FORBIDDEN_VISIBLE_REFERENCE.test(visibleText) || FORBIDDEN_GAMEPLAY_CONTEXT.test(visibleText)) continue;
     const historyLabel = questionHistoryLabel(question).normalize("NFKC").toLocaleLowerCase("de-DE");
@@ -260,6 +317,7 @@ function parseResponse(raw: string, spec: QuestionSpec) {
     if (excluded.has(historyLabel) || excluded.has(contextKey)) continue;
     const enriched: GameQuestion = {
       ...question,
+      prompt: wordOrderPrompt ?? question.prompt,
       level: spec.level,
       lexicalTopic: spec.lexicalTopic,
       grammarTopic: spec.grammarTopic,
