@@ -1,0 +1,246 @@
+{
+  "format": "Conveyor Factory Kit 1.0",
+  "units": "meters",
+  "up_axis": "Y in GLB / Z in Blender",
+  "assets": [
+    {
+      "root": "ASSET_Conveyor_Segment",
+      "dimensions_m_xyz": [
+        5.25,
+        2.42,
+        1.04
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Conveyor_Belt",
+        "Conveyor_Frame_Left",
+        "Conveyor_Frame_Right",
+        "Conveyor_Leg_L_A",
+        "Conveyor_Leg_L_B",
+        "Conveyor_Leg_R_A",
+        "Conveyor_Leg_R_B",
+        "Conveyor_Roller_01",
+        "Conveyor_Roller_02",
+        "Conveyor_Roller_03",
+        "Conveyor_Roller_04",
+        "Conveyor_Roller_05",
+        "Conveyor_Roller_06",
+        "Conveyor_Roller_07",
+        "Conveyor_Roller_08",
+        "Conveyor_Roller_09",
+        "Conveyor_Safety_Rail_Left",
+        "Conveyor_Safety_Rail_Right"
+      ]
+    },
+    {
+      "root": "ASSET_Hydraulic_Press",
+      "dimensions_m_xyz": [
+        3.14,
+        2.35,
+        4.13
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Press_Base",
+        "Press_Bed",
+        "Press_Crown",
+        "Press_Die",
+        "Press_Hydraulic_Cylinder",
+        "Press_Pillar_L",
+        "Press_Pillar_R",
+        "Press_Ram",
+        "Press_Warning_L",
+        "Press_Warning_R"
+      ]
+    },
+    {
+      "root": "ASSET_Furnace_Portal",
+      "dimensions_m_xyz": [
+        3.65,
+        2.0,
+        3.88
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Furnace_Base",
+        "Furnace_Flame_00",
+        "Furnace_Flame_07",
+        "Furnace_Flame_14",
+        "Furnace_Header",
+        "Furnace_Heat_Core",
+        "Furnace_Jamb_Left",
+        "Furnace_Jamb_Right",
+        "Furnace_Pipe_L",
+        "Furnace_Pipe_R"
+      ]
+    },
+    {
+      "root": "ASSET_Transverse_Saw",
+      "dimensions_m_xyz": [
+        4.3,
+        2.25,
+        3.29
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Saw_Arch_L",
+        "Saw_Arch_R",
+        "Saw_Base",
+        "Saw_Blade",
+        "Saw_Blade_Hub",
+        "Saw_Crossbeam",
+        "Saw_Guard_Top",
+        "Saw_Table"
+      ]
+    },
+    {
+      "root": "ASSET_Industrial_Piston",
+      "dimensions_m_xyz": [
+        2.45,
+        2.1,
+        4.02
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Piston_Base",
+        "Piston_Foot_L",
+        "Piston_Foot_R",
+        "Piston_Main_Barrel",
+        "Piston_Return_L",
+        "Piston_Return_R",
+        "Piston_Rod",
+        "Piston_Strike_Plate"
+      ]
+    },
+    {
+      "root": "ASSET_Ventilation_Turbine",
+      "dimensions_m_xyz": [
+        3.2,
+        1.65,
+        3.66
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Turbine_Base",
+        "Turbine_Blade_01",
+        "Turbine_Blade_02",
+        "Turbine_Blade_03",
+        "Turbine_Blade_04",
+        "Turbine_Blade_05",
+        "Turbine_Blade_06",
+        "Turbine_Blade_07",
+        "Turbine_Blade_08",
+        "Turbine_Guard_Ring",
+        "Turbine_Hub",
+        "Turbine_Stand_L",
+        "Turbine_Stand_R"
+      ]
+    },
+    {
+      "root": "ASSET_Hero_Worker_Drone",
+      "dimensions_m_xyz": [
+        1.62,
+        0.913,
+        2.273
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Hero_Arm_L",
+        "Hero_Arm_R",
+        "Hero_Boot_L",
+        "Hero_Boot_R",
+        "Hero_Chest_Badge",
+        "Hero_Hand_L",
+        "Hero_Hand_R",
+        "Hero_Head",
+        "Hero_Helmet",
+        "Hero_Helmet_Brim",
+        "Hero_Leg_L",
+        "Hero_Leg_R",
+        "Hero_Torso",
+        "Hero_Visor"
+      ]
+    },
+    {
+      "root": "ASSET_Control_Terminal",
+      "dimensions_m_xyz": [
+        1.55,
+        1.2,
+        2.311
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Terminal_Base",
+        "Terminal_Button_1",
+        "Terminal_Button_2",
+        "Terminal_Button_3",
+        "Terminal_Console",
+        "Terminal_Pedestal",
+        "Terminal_Screen"
+      ]
+    },
+    {
+      "root": "ASSET_Exit_Gate",
+      "dimensions_m_xyz": [
+        3.75,
+        1.3,
+        3.76
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Exit_Arrow_Head_A",
+        "Exit_Arrow_Head_B",
+        "Exit_Arrow_Shaft",
+        "Exit_Base",
+        "Exit_Glow_Left",
+        "Exit_Glow_Right",
+        "Exit_Header",
+        "Exit_Pillar_Left",
+        "Exit_Pillar_Right",
+        "Exit_Sign"
+      ]
+    },
+    {
+      "root": "ASSET_Warning_Beacon",
+      "dimensions_m_xyz": [
+        1.1,
+        1.1,
+        2.19
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Beacon_Base",
+        "Beacon_Cap",
+        "Beacon_Guard_Lower",
+        "Beacon_Guard_Upper",
+        "Beacon_Lamp",
+        "Beacon_Pole"
+      ]
+    },
+    {
+      "root": "ASSET_Floor_Plate",
+      "dimensions_m_xyz": [
+        4.0,
+        2.715,
+        0.305
+      ],
+      "origin": "ground-center",
+      "objects": [
+        "Floor_Bolt_L_B",
+        "Floor_Bolt_L_F",
+        "Floor_Bolt_R_B",
+        "Floor_Bolt_R_F",
+        "Floor_Hazard_Stripe_01",
+        "Floor_Hazard_Stripe_02",
+        "Floor_Hazard_Stripe_03",
+        "Floor_Hazard_Stripe_04",
+        "Floor_Hazard_Stripe_05",
+        "Floor_Hazard_Stripe_06",
+        "Floor_Hazard_Stripe_07",
+        "Floor_Hazard_Stripe_08",
+        "Floor_Plate_Base",
+        "Floor_Plate_Inset"
+      ]
+    }
+  ]
+}
