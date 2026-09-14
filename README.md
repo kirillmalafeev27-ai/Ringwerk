@@ -56,22 +56,22 @@ AITunnel вызывается только на сервере: для гене�
 - runtime secret: `AITUNNEL_API_KEY`; необязательный — `ELEVENLABS_API_KEY` для озвучки аудирования;
 - необязательные runtime variables перечислены в `.env.example`;
 - одна реплика для in-memory кэша пакетов (при масштабировании нужен общий Redis-lock/cache).
-- run command можно не задавать (`node northflank-serve.mjs` из `CMD`), но `npm start` и `npm run start:northflank` внутри образа тоже работают.
+- run command можно не задавать (`node northflank-serve.mjs` из `CMD`); `npm start` и `npm run start:northflank` внутри образа ведут туда же.
 
 Контейнер собирает отдельный vinext standalone runtime с `DEPLOY_TARGET=node`, слушает на `0.0.0.0` и не содержит `.env`-файлы. Обычная сборка без `DEPLOY_TARGET=node` остаётся Cloudflare/Sites-сборкой.
 
 Если сервис собирается из репозитория, а не из `Dockerfile` (buildpack/Git-сборка), то:
 
 - build command: `npm ci --no-audit --no-fund && npm run build:node`;
-- run command: `npm run start:northflank`.
+- run command: `npm run start:northflank` — или оставьте пустым: `npm start` теперь ведёт в тот же скрипт.
 
-`npm run start:northflank` подставляет `NODE_ENV=production` и `HOST=0.0.0.0`, разбирает `PORT`/`PORTS`, пишет в лог итоговый список портов и сам собирает standalone-выход, если сборка прошла без `DEPLOY_TARGET=node`.
+`npm run start:northflank` подставляет `NODE_ENV=production` и `HOST=0.0.0.0`, разбирает `PORT`/`PORTS`, пишет в лог итоговый список портов и сам собирает standalone-выход, если сборка прошла без `DEPLOY_TARGET=node`. `npm run start:vinext` — это прежний `vinext start` на одном порту.
 
 ### Ingress отвечает `Connection refused`
 
 `upstream connect error ... Connection refused` приходит от прокси Northflank, а не от приложения: контейнер поднялся, но на порту, куда постучался прокси, никто не слушает. По порядку:
 
-1. Сервис собирается из ветки, где есть корневой `Dockerfile` и `scripts/start-northflank.mjs`? Без них buildpack запустит `npm start`, а это Cloudflare-режим, который слушает `127.0.0.1:8787` и до ingress не доходит.
+1. Сервис собирается из ветки, где есть корневой `Dockerfile` и `scripts/start-northflank.mjs`? Без них buildpack запустит `npm start` из старого `package.json`, а он до ingress не доходит.
 2. Номер в port entry совпадает с тем, что в логе старта: `[northflank] PORT=... PORTS=... -> binding ... on 0.0.0.0`.
 3. Если номер нестандартный — задайте `PORT` или `PORTS` в переменных сервиса и передеплойте.
 
