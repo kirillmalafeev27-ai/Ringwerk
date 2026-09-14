@@ -374,7 +374,7 @@ h1 {
 }
 
 .entry-mode-grid {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
 }
 
 .entry-mode-grid button {
@@ -1166,6 +1166,30 @@ h1 {
   font-size: 0.59rem;
   font-weight: 800;
   letter-spacing: 0.04em;
+}
+
+.audio-replay {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 10px;
+  padding: 7px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(15, 40, 35, 0.9);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease;
+}
+
+.audio-replay:hover {
+  border-color: var(--teal);
+  background: rgba(26, 64, 56, 0.96);
 }
 
 .quiz-translation {

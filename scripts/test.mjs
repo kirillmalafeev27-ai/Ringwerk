@@ -8,6 +8,8 @@ const testFiles = [
   "tests/game-assets.test.mjs",
   "tests/recall-evaluation.test.mjs",
   "tests/exercise-formats.test.mjs",
+  "tests/text-to-speech.test.mjs",
+  "tests/listening-questions.test.mjs",
 ];
 const workerEnvironment = { ...process.env };
 delete workerEnvironment.DEPLOY_TARGET;

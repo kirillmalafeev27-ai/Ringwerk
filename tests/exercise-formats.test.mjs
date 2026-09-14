@@ -1,11 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { GRAMMAR_TOPICS } from "../lib/learning-settings.ts";
+import { GRAMMAR_TOPICS, QUESTION_MODES, learningPoolKey } from "../lib/learning-settings.ts";
 import {
+  AUDIO_QUALITY_RULES,
   EXERCISE_FORMATS,
   TOPIC_RULES,
   exerciseFormatFor,
+  exerciseHint,
   qualityRules,
   topicRuleFor,
   usesEveryFragment,
@@ -33,6 +35,40 @@ test("only the word-order topics leave the gap format", () => {
   );
   assert.deepEqual(wordOrder, ["Wortstellung im Hauptsatz", "Wortstellung im Nebensatz"]);
   assert.equal(exerciseFormatFor("Dativ"), EXERCISE_FORMATS.gap);
+});
+
+test("listening replaces the written shape whatever the grammar topic is", () => {
+  for (const topic of ["Dativ", "Wortstellung im Hauptsatz"]) {
+    assert.equal(exerciseFormatFor(topic, "audio"), EXERCISE_FORMATS.audio);
+  }
+  assert.equal(exerciseFormatFor("Dativ", "recall"), EXERCISE_FORMATS.gap);
+  assert.ok(AUDIO_QUALITY_RULES.length >= 4);
+});
+
+test("listening keeps a pool of its own while the written modes share one", () => {
+  const base = { level: "A2", lexicalTopic: "Alltag & Routinen", grammarTopic: "Präsens" };
+  assert.equal(
+    learningPoolKey({ ...base, mode: "recognition" }),
+    learningPoolKey({ ...base, mode: "recall" }),
+  );
+  assert.notEqual(
+    learningPoolKey({ ...base, mode: "audio" }),
+    learningPoolKey({ ...base, mode: "recognition" }),
+  );
+  // The grammar topic must not split the listening queue, since listening
+  // tasks are not written for one.
+  assert.equal(
+    learningPoolKey({ ...base, mode: "audio" }),
+    learningPoolKey({ ...base, grammarTopic: "Passiv", mode: "audio" }),
+  );
+});
+
+test("every practice mode has a hint in every format", () => {
+  for (const format of Object.values(EXERCISE_FORMATS)) {
+    for (const mode of QUESTION_MODES) {
+      assert.ok(exerciseHint(format, mode.id), `${format.id} has no hint for ${mode.id}`);
+    }
+  }
 });
 
 test("word-order answers have to spend every listed fragment", () => {

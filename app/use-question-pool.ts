@@ -94,6 +94,7 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         level: settings.level,
+        mode: settings.mode,
         lexicalTopic: settings.lexicalTopic,
         grammarTopic: settings.grammarTopic,
         count: BATCH_SIZE,
@@ -143,7 +144,7 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
     inFlightRef.current = task;
     setIsRefilling(true);
     return task;
-  }, [poolKey, settings.grammarTopic, settings.level, settings.lexicalTopic]);
+  }, [poolKey, settings.grammarTopic, settings.level, settings.lexicalTopic, settings.mode]);
 
   const nextReserve = useCallback(() => {
     if (reserveCursorRef.current >= reserveOrderRef.current.length) {
@@ -225,6 +226,7 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
     if (!reservesByKeyRef.current.has(poolKey)) {
       const reserve = fallbackQuestionsFor({
         level: settings.level,
+        mode: settings.mode,
         lexicalTopic: settings.lexicalTopic,
         grammarTopic: settings.grammarTopic,
       });
@@ -257,7 +259,7 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
       if (retryTimerRef.current) window.clearTimeout(retryTimerRef.current);
       retryTimerRef.current = null;
     };
-  }, [poolKey, refill, settings.grammarTopic, settings.level, settings.lexicalTopic]);
+  }, [poolKey, refill, settings.grammarTopic, settings.level, settings.lexicalTopic, settings.mode]);
 
   useEffect(() => {
     enabledRef.current = enabled;

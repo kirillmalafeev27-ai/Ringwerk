@@ -1,8 +1,14 @@
-import { EXERCISE_FORMATS, exerciseFormatFor } from "@/lib/exercise-formats";
+import {
+  AUDIO_DISPLAY_CONTEXT,
+  EXERCISE_FORMATS,
+  exerciseFormatFor,
+} from "@/lib/exercise-formats";
 import type { LearningSettings } from "@/lib/learning-settings";
 
 export {
+  AUDIO_DISPLAY_CONTEXT,
   EXERCISE_FORMATS,
+  exerciseHint,
   exerciseFormatFor,
   usesEveryFragment,
   wordOrderFragments,
@@ -21,6 +27,8 @@ export type GameQuestion = {
   level?: string;
   lexicalTopic?: string;
   grammarTopic?: string;
+  /** Listening drills only: the German sentence that is spoken, never printed. */
+  audioText?: string;
 };
 
 const FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
@@ -54,14 +62,37 @@ const FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
   { level: "B2", lexicalTopic: "Umwelt & Klimawandel", grammarTopic: "Wortstellung im Nebensatz", prompt: "Соберите из всех частей придаточное предложение.", context: "Wir wissen, / dass / die Stadt / viel / investiert / hat", translation: "Мы знаем, что город много инвестировал.", options: ["Wir wissen, dass die Stadt viel investiert hat.", "Wir wissen, dass die Stadt hat viel investiert.", "Wir wissen, dass hat die Stadt viel investiert.", "Wir wissen, dass die Stadt viel hat investiert."], correct: 0, rule: "В придаточном вспомогательный глагол идёт последним, после Partizip II: dass die Stadt viel investiert hat." },
 ];
 
-export function exerciseFormatOf(question: Pick<GameQuestion, "grammarTopic">) {
-  return exerciseFormatFor(question.grammarTopic);
+// Listening reserves, ported from the See Escape audio pool. `translation` stays
+// empty on purpose — printing it would hand over the answer — and `rule` carries
+// the German sentence so the feedback line reveals what was said.
+const AUDIO_FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
+  { level: "A1", lexicalTopic: "Einkaufen & Konsum", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Ich kaufe heute Brot und Käse.", options: ["Сегодня я покупаю хлеб и сыр.", "Сегодня я продаю хлеб и сыр.", "Сегодня я покупаю булочки и сыр.", "Сегодня я покупаю хлеб и колбасу."], correct: 0, rule: "Ich kaufe heute Brot und Käse." },
+  { level: "A1", lexicalTopic: "Verkehr & Mobilität", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Der Zug kommt um acht Uhr an.", options: ["Поезд прибывает в восемь часов.", "Поезд отправляется в восемь часов.", "Поезд прибывает на восьмой путь.", "На поезд нужно пересесть в восемь часов."], correct: 0, rule: "Der Zug kommt um acht Uhr an." },
+  { level: "A2", lexicalTopic: "Gesundheit & Wohlbefinden", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Wir müssen morgen früh zum Arzt gehen.", options: ["Завтра рано мы должны пойти к врачу.", "Завтра рано мы хотим пойти к врачу.", "Завтра рано мы должны пойти в аптеку.", "Завтра рано нам разрешено пойти к врачу."], correct: 0, rule: "Wir müssen morgen früh zum Arzt gehen." },
+  { level: "A2", lexicalTopic: "Wohnen & Nachbarschaft", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Sie hat den Schlüssel auf dem Tisch gelassen.", options: ["Она оставила ключ на столе.", "Она положила ключ на стул.", "Она оставила ключ в столе.", "Она забыла замок на столе."], correct: 0, rule: "Sie hat den Schlüssel auf dem Tisch gelassen." },
+  { level: "B1", lexicalTopic: "Wetter & Jahreszeiten", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Obwohl es regnet, gehen die Kinder nach draußen.", options: ["Хотя идёт дождь, дети выходят на улицу.", "Пока идёт дождь, дети выходят на улицу.", "Потому что идёт дождь, дети выходят на улицу.", "Хотя идёт дождь, дети идут внутрь."], correct: 0, rule: "Obwohl es regnet, gehen die Kinder nach draußen." },
+  { level: "B1", lexicalTopic: "Freundschaft & Partnerschaft", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Ich freue mich darauf, dich wiederzusehen.", options: ["Я рад снова тебя увидеть.", "Я боюсь снова тебя увидеть.", "Я рад снова тебя проводить.", "Я рад снова с тобой познакомиться."], correct: 0, rule: "Ich freue mich darauf, dich wiederzusehen." },
+  { level: "B2", lexicalTopic: "Arbeit & Beruf", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Nachdem der Vertrag unterschrieben worden war, begann die Lieferung.", options: ["После того как договор был подписан, началась поставка.", "После того как договор подписали, поставка была отменена.", "После того как договор был отправлен, началась поставка.", "После того как заявка была подписана, началась поставка."], correct: 0, rule: "Nachdem der Vertrag unterschrieben worden war, begann die Lieferung." },
+  { level: "B2", lexicalTopic: "Termine & Zeitmanagement", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Je länger wir warten, desto schwieriger wird die Entscheidung.", options: ["Чем дольше мы ждём, тем труднее становится решение.", "Чем дольше мы ждём, тем труднее становится обсуждение.", "Чем дольше мы советуемся, тем труднее становится решение.", "Чем дольше мы ждём, тем надёжнее становится решение."], correct: 0, rule: "Je länger wir warten, desto schwieriger wird die Entscheidung." },
+];
+
+export function exerciseFormatOf(
+  question: Pick<GameQuestion, "grammarTopic" | "audioText">,
+  mode?: string,
+) {
+  return exerciseFormatFor(question.grammarTopic, question.audioText ? "audio" : mode);
 }
 
-export const FALLBACK_QUESTIONS: GameQuestion[] = FALLBACK_DATA.map((question) => ({
-  ...question,
-  id: `reserve-${hashText([question.context, ...question.options].join("|"))}`,
-}));
+function toReserve(question: Omit<GameQuestion, "id">): GameQuestion {
+  return {
+    ...question,
+    id: `reserve-${hashText([question.audioText ?? question.context, ...question.options].join("|"))}`,
+  };
+}
+
+export const FALLBACK_QUESTIONS: GameQuestion[] = FALLBACK_DATA.map(toReserve);
+
+export const AUDIO_FALLBACK_QUESTIONS: GameQuestion[] = AUDIO_FALLBACK_DATA.map(toReserve);
 
 function cleanText(value: unknown, maximum: number) {
   if (typeof value !== "string") return "";
@@ -72,14 +103,16 @@ function cleanText(value: unknown, maximum: number) {
   return withoutControls.replace(/\s+/gu, " ").trim().slice(0, maximum);
 }
 
-export function questionFingerprint(question: Pick<GameQuestion, "context" | "options">) {
-  return [question.context, ...[...question.options].sort((left, right) => left.localeCompare(right, "de"))]
+export function questionFingerprint(question: Pick<GameQuestion, "context" | "options" | "audioText">) {
+  // Every listening task shares one display line, so its identity is the spoken
+  // sentence rather than what the player sees.
+  return [question.audioText || question.context, ...[...question.options].sort((left, right) => left.localeCompare(right, "de"))]
     .map((value) => cleanText(value, 360).normalize("NFKC").toLocaleLowerCase("de-DE"))
     .join("|");
 }
 
-export function questionHistoryLabel(question: Pick<GameQuestion, "prompt" | "context">) {
-  return `${question.prompt} ${question.context}`.trim();
+export function questionHistoryLabel(question: Pick<GameQuestion, "prompt" | "context" | "audioText">) {
+  return (question.audioText || `${question.prompt} ${question.context}`).trim();
 }
 
 export function normalizeQuestion(candidate: unknown, sequence = 0): GameQuestion | null {
@@ -104,7 +137,8 @@ export function normalizeQuestion(candidate: unknown, sequence = 0): GameQuestio
 
   const tuple = options as GameQuestion["options"];
   const correct = numericCorrect as GameQuestion["correct"];
-  const identity = questionFingerprint({ context, options: tuple });
+  const audioText = cleanText(source.audioText ?? source.audio ?? source.satz, 360) || undefined;
+  const identity = questionFingerprint({ context, options: tuple, audioText });
   return {
     id: cleanText(source.id, 100) || `question-${hashText(identity)}-${sequence}`,
     prompt,
@@ -116,6 +150,7 @@ export function normalizeQuestion(candidate: unknown, sequence = 0): GameQuestio
     level: cleanText(source.level, 8) || undefined,
     lexicalTopic: cleanText(source.lexicalTopic ?? source.topic, 80) || undefined,
     grammarTopic: cleanText(source.grammarTopic, 80) || undefined,
+    audioText,
   };
 }
 
@@ -132,9 +167,12 @@ export function shuffleQuestion(question: GameQuestion, random = Math.random): G
   };
 }
 
-export function fallbackQuestionsFor(settings: Pick<LearningSettings, "level" | "lexicalTopic" | "grammarTopic">) {
+export function fallbackQuestionsFor(
+  settings: Pick<LearningSettings, "level" | "lexicalTopic" | "grammarTopic"> & { mode?: string },
+) {
   const levelRank = { A1: 0, A2: 1, B1: 2, B2: 3 } as const;
-  const eligible = FALLBACK_QUESTIONS.filter(
+  const pool = settings.mode === "audio" ? AUDIO_FALLBACK_QUESTIONS : FALLBACK_QUESTIONS;
+  const eligible = pool.filter(
     (question) => levelRank[question.level ?? "A1"] <= levelRank[settings.level],
   );
   const score = (question: GameQuestion) =>
@@ -142,7 +180,7 @@ export function fallbackQuestionsFor(settings: Pick<LearningSettings, "level" | 
     + (question.grammarTopic === settings.grammarTopic ? 5 : 0)
     + (question.lexicalTopic === settings.lexicalTopic ? 3 : 0);
   const preferred = eligible.filter(
-    (question) => question.grammarTopic === settings.grammarTopic
+    (question) => (question.grammarTopic !== undefined && question.grammarTopic === settings.grammarTopic)
       || question.lexicalTopic === settings.lexicalTopic,
   );
   const supplemental = eligible.filter((question) => !preferred.includes(question));

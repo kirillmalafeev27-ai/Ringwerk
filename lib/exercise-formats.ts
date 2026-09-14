@@ -7,7 +7,7 @@
  * through the grammar topic it claims to test.
  */
 
-export type ExerciseFormatId = "gap" | "word-order";
+export type ExerciseFormatId = "gap" | "word-order" | "audio";
 
 export type ExerciseFormat = {
   id: ExerciseFormatId;
@@ -49,9 +49,27 @@ const WORD_ORDER_FORMAT: ExerciseFormat = {
   },
 };
 
+// Listening drills never print the German sentence: it is only spoken, so the
+// task line carries this fixed Russian display text instead.
+export const AUDIO_DISPLAY_CONTEXT = "Немецкая фраза звучит вслух.";
+
+const AUDIO_FORMAT: ExerciseFormat = {
+  id: "audio",
+  label: "Аудирование",
+  shape:
+    "Hoerverstehensaufgabe. audioText ist ein vollstaendiger deutscher Satz, der nur vorgelesen und nie angezeigt wird; die vier Optionen sind russische Uebersetzungen.",
+  instruction: "Прослушай немецкую фразу и выбери точный перевод.",
+  recallPlaceholder: "Напиши перевод",
+  hints: {
+    recognition: "Нажми ▶, чтобы прослушать ещё раз, затем выбери перевод.",
+    recall: "Аудирование идёт только с вариантами ответа.",
+  },
+};
+
 export const EXERCISE_FORMATS: Record<ExerciseFormatId, ExerciseFormat> = {
   gap: GAP_FORMAT,
   "word-order": WORD_ORDER_FORMAT,
+  audio: AUDIO_FORMAT,
 };
 
 // Word-order drills show the parts of a sentence instead of a gap, so they need
@@ -65,8 +83,20 @@ export function wordOrderInstruction(grammarTopic: string | undefined) {
   return grammarTopic ? WORD_ORDER_INSTRUCTIONS[grammarTopic] : undefined;
 }
 
-export function exerciseFormatFor(grammarTopic: string | undefined): ExerciseFormat {
+// Listening replaces the written task entirely, so the practice mode decides
+// the shape before the grammar topic gets a say.
+export function exerciseFormatFor(
+  grammarTopic: string | undefined,
+  mode?: string,
+): ExerciseFormat {
+  if (mode === "audio") return AUDIO_FORMAT;
   return wordOrderInstruction(grammarTopic) ? WORD_ORDER_FORMAT : GAP_FORMAT;
+}
+
+// Listening is answered from options like recognition is, so it reads the same
+// hint slot.
+export function exerciseHint(format: ExerciseFormat, mode: string) {
+  return mode === "recall" ? format.hints.recall : format.hints.recognition;
 }
 
 export function wordOrderFragments(context: string) {
@@ -109,6 +139,17 @@ export function qualityRules(grammarTopic: string): string[] {
     "Keine abgeschnittenen Saetze, keine Erklaerungen ausserhalb von rule, kein Markdown.",
   ];
 }
+
+/**
+ * The listening generator's own rules, kept in See Escape's English wording
+ * because that is the language its audio prompt is written in.
+ */
+export const AUDIO_QUALITY_RULES: readonly string[] = [
+  "Every German sentence is natural, complete, and 6 to 14 words long.",
+  "The correct Russian option is an exact translation.",
+  "Wrong options are realistic learner traps: similar word field, separable prefix, modal verb, preposition, case relation, movement direction, false friend, or verb valency.",
+  "All four options are Russian, similarly short, plausible, and distinct.",
+];
 
 /**
  * Per-topic authoring rules. Without them the model writes items that are

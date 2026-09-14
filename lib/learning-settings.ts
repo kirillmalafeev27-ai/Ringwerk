@@ -3,6 +3,7 @@ export const LANGUAGE_LEVELS = ["A1", "A2", "B1", "B2"] as const;
 export const QUESTION_MODES = [
   { id: "recognition", label: "Узнавание" },
   { id: "recall", label: "Воспроизведение" },
+  { id: "audio", label: "Аудирование" },
 ] as const;
 
 export const LEXICAL_TOPICS = [
@@ -179,7 +180,12 @@ export function normalizeLearningSettings(candidate: unknown): LearningSettings 
   };
 }
 
-export function learningPoolKey(settings: Pick<LearningSettings, "level" | "lexicalTopic" | "grammarTopic">) {
-  // Both practice modes deliberately consume the same generated pool.
-  return [settings.level, settings.lexicalTopic, settings.grammarTopic].join("|");
+export function learningPoolKey(
+  settings: Pick<LearningSettings, "level" | "lexicalTopic" | "grammarTopic" | "mode">,
+) {
+  // Listening drills carry no grammar topic, so they keep a queue of their own;
+  // the two written modes deliberately consume the same generated pool.
+  return settings.mode === "audio"
+    ? ["audio", settings.level, settings.lexicalTopic].join("|")
+    : [settings.level, settings.lexicalTopic, settings.grammarTopic].join("|");
 }

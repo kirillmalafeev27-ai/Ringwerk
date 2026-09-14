@@ -7,6 +7,7 @@ import {
   LANGUAGE_LEVELS,
   LEARNING_SETTINGS_STORAGE_KEY,
   LEXICAL_TOPIC_GROUPS,
+  QUESTION_MODES,
   normalizeLearningSettings,
   type GrammarTopic,
   type LanguageLevel,
@@ -14,8 +15,15 @@ import {
   type LexicalTopic,
   type QuestionMode,
 } from "@/lib/learning-settings";
-import { exerciseFormatOf } from "@/lib/questions";
+import { exerciseFormatOf, exerciseHint } from "@/lib/questions";
+import { playQuestionAudio, stopQuestionAudio } from "./question-audio";
 import { useQuestionPool } from "./use-question-pool";
+
+const MODE_DESCRIPTIONS: Record<QuestionMode, string> = {
+  recognition: "Выбрать одну из четырёх форм",
+  recall: "Написать ответ без вариантов",
+  audio: "Услышать фразу и выбрать перевод",
+};
 
 const TAU = Math.PI * 2;
 const STEP_ANGLE = TAU / 6;
@@ -657,7 +665,8 @@ export default function Home() {
     restartQuestions,
     releaseQuestion,
   } = useQuestionPool(sessionSettings, settingsReady && phase !== "setup");
-  const questionFormat = exerciseFormatOf(question);
+  const questionFormat = exerciseFormatOf(question, sessionSettings.mode);
+  const isListening = questionFormat.id === "audio";
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recallInputRef = useRef<HTMLInputElement>(null);
   const worldRef = useRef<WorldState>(createWorld());
@@ -1089,6 +1098,18 @@ export default function Home() {
     return () => window.cancelAnimationFrame(frame);
   }, [feedback, isEvaluating, phase, question.id, resolution.action, sessionSettings.mode]);
 
+  // A listening task is heard, not read, so it speaks as soon as it appears and
+  // falls silent the moment the run moves on.
+  useEffect(() => {
+    const spoken = question.audioText;
+    if (phase !== "playing" || resolution.action || !spoken) {
+      stopQuestionAudio();
+      return;
+    }
+    void playQuestionAudio(spoken);
+    return () => stopQuestionAudio();
+  }, [phase, question.audioText, question.id, resolution.action]);
+
   useEffect(() => {
     if (phase !== "playing" || feedback === "wrong" || isEvaluating || impulseExpiredRef.current) return;
     let lastTick = performance.now();
@@ -1424,7 +1445,7 @@ export default function Home() {
       }
 
       if (
-        sessionSettings.mode === "recognition"
+        sessionSettings.mode !== "recall"
         && !feedbackRef.current
         && !resolutionRef.current.action
         && !resolutionRef.current.bonus
@@ -1480,6 +1501,11 @@ export default function Home() {
     : queuedCount > 0
       ? `ПУЛ ${queuedCount.toString().padStart(2, "0")}`
       : "ПУЛ · РЕЗЕРВ";
+  const modeLabel = sessionSettings.mode === "recall"
+    ? "ВОСПРОИЗВЕДЕНИЕ"
+    : sessionSettings.mode === "audio"
+      ? "АУДИРОВАНИЕ"
+      : "УЗНАВАНИЕ";
   const visibleQuestionFocus = question.id.startsWith("reserve-")
     ? `${question.level ?? ""} · ${question.lexicalTopic ?? "общая лексика"} · ${question.grammarTopic ?? "общая грамматика"}`
     : `${sessionSettings.lexicalTopic} · ${sessionSettings.grammarTopic}`;
@@ -1554,24 +1580,19 @@ export default function Home() {
             </fieldset>
 
             <fieldset className="entry-fieldset">
-              <legend><b>РЕЖИМ ОТВЕТА</b><span>Один общий пул, два способа вспомнить</span></legend>
+              <legend><b>РЕЖИМ ОТВЕТА</b><span>Письменные режимы делят один пул, аудирование держит свой</span></legend>
               <div className="entry-mode-grid">
-                <button
-                  type="button"
-                  className={draftSettings.mode === "recognition" ? "is-selected" : ""}
-                  aria-pressed={draftSettings.mode === "recognition"}
-                  onClick={() => updateDraftSettings({ mode: "recognition" as QuestionMode })}
-                >
-                  <b>УЗНАВАНИЕ</b><span>Выбрать одну из четырёх форм</span>
-                </button>
-                <button
-                  type="button"
-                  className={draftSettings.mode === "recall" ? "is-selected" : ""}
-                  aria-pressed={draftSettings.mode === "recall"}
-                  onClick={() => updateDraftSettings({ mode: "recall" as QuestionMode })}
-                >
-                  <b>ВОСПРОИЗВЕДЕНИЕ</b><span>Написать ответ без вариантов</span>
-                </button>
+                {QUESTION_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    className={draftSettings.mode === mode.id ? "is-selected" : ""}
+                    aria-pressed={draftSettings.mode === mode.id}
+                    onClick={() => updateDraftSettings({ mode: mode.id })}
+                  >
+                    <b>{mode.label.toLocaleUpperCase("ru-RU")}</b><span>{MODE_DESCRIPTIONS[mode.id]}</span>
+                  </button>
+                ))}
               </div>
             </fieldset>
 
@@ -1606,7 +1627,7 @@ export default function Home() {
 
             <div className="entry-confirm-row">
               <p>
-                <b>{draftSettings.level} · {draftSettings.mode === "recall" ? "БЕЗ ВАРИАНТОВ" : "4 ВАРИАНТА"}</b>
+                <b>{draftSettings.level} · {draftSettings.mode === "recall" ? "БЕЗ ВАРИАНТОВ" : draftSettings.mode === "audio" ? "НА СЛУХ" : "4 ВАРИАНТА"}</b>
                 <span>{draftSettings.lexicalTopic} · {draftSettings.grammarTopic}</span>
               </p>
               <button className="primary-button" type="button" onClick={confirmLearningSettings} disabled={!settingsReady}>
@@ -1667,7 +1688,7 @@ export default function Home() {
                     заряда. После ответа механизм не замедляется.
                   </p>
                   <div className="briefing-focus">
-                    <b>{sessionSettings.level} · {sessionSettings.mode === "recall" ? "ВОСПРОИЗВЕДЕНИЕ" : "УЗНАВАНИЕ"}</b>
+                    <b>{sessionSettings.level} · {modeLabel}</b>
                     <span>{sessionSettings.lexicalTopic} · {sessionSettings.grammarTopic}</span>
                   </div>
                 </div>
@@ -1816,7 +1837,7 @@ export default function Home() {
             </div>
             <div className="quiz-focus" title={visibleQuestionFocus}>
               <b>{sessionSettings.level}</b>
-              <span>{sessionSettings.mode === "recall" ? "ВОСПРОИЗВЕДЕНИЕ" : "УЗНАВАНИЕ"}</span>
+              <span>{modeLabel}</span>
               <em>{visibleQuestionFocus}</em>
             </div>
             <div
@@ -1832,10 +1853,20 @@ export default function Home() {
               <div className="impulse-thresholds"><span>ШАГ 10</span><span>ПЕРЕХОД 25</span><span>СПИЦА 55</span><span>ПРЫЖОК 80</span></div>
             </div>
             <p className="quiz-instruction">{question.prompt}</p>
-            <h2 id="quiz-heading" lang="de">{question.context}</h2>
+            <h2 id="quiz-heading" lang={isListening ? undefined : "de"}>{question.context}</h2>
+            {isListening && question.audioText && (
+              <button
+                type="button"
+                className="audio-replay"
+                onClick={() => void playQuestionAudio(question.audioText!)}
+                aria-label="Прослушать немецкую фразу ещё раз"
+              >
+                <span aria-hidden="true">▶</span> ПОВТОРИТЬ
+              </button>
+            )}
             {question.translation && <p className="quiz-translation">{question.translation}</p>}
             {!resolution.action ? (
-              sessionSettings.mode === "recognition" ? (
+              sessionSettings.mode !== "recall" ? (
                 <div className="answer-grid">
                   {question.options.map((option, index) => {
                     const isSelected = selectedAnswer === index;
@@ -1940,8 +1971,8 @@ export default function Home() {
               {!feedback && !isEvaluating && (
                 <span>
                   {sessionSettings.mode === "recall"
-                    ? `${questionFormat.hints.recall} До отправки импульс уже сгорает.`
-                    : `${questionFormat.hints.recognition} Импульс, таймер и механизм уже идут.`}
+                    ? `${exerciseHint(questionFormat, sessionSettings.mode)} До отправки импульс уже сгорает.`
+                    : `${exerciseHint(questionFormat, sessionSettings.mode)} Импульс, таймер и механизм уже идут.`}
                 </span>
               )}
             </div>
@@ -1954,7 +1985,7 @@ export default function Home() {
       {phase !== "setup" && <footer className="game-footer">
         <p><span className="live-dot" /> Мир не останавливается; заработанный импульс продолжает сгорать.</p>
         <p className="key-legend">
-          {sessionSettings.mode === "recognition" && <><kbd>1–4</kbd> ответ </>}
+          {sessionSettings.mode !== "recall" && <><kbd>1–4</kbd> ответ </>}
           <kbd>WASD</kbd> действие <kbd>Space</kbd> спица <kbd>Q</kbd> прыжок <kbd>Z / X</kbd> протокол
         </p>
       </footer>}

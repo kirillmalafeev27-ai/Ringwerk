@@ -87,10 +87,16 @@ test("source keeps the fast but readable game rules explicit", async () => {
   assert.match(questionRoute, /\.at\(-1\)/);
   assert.match(page, /type Phase = "setup" \| "briefing" \| "playing" \| "won" \| "lost"/);
   assert.match(page, /\/api\/questions\/evaluate/);
-  assert.match(page, /sessionSettings\.mode === "recognition"/);
+  // Answering from options is shared by recognition and listening, so the 1-4
+  // shortcut is gated on "not recall" rather than on recognition alone.
+  assert.match(page, /sessionSettings\.mode !== "recall"/);
   assert.match(settings, /learningPoolKey/);
   assert.match(settings, /settings\.grammarTopic\]\.join\("\|"\)/);
-  assert.doesNotMatch(settings.match(/function learningPoolKey[\s\S]*?\n}/)?.[0] ?? "", /settings\.mode/);
+  const poolKeyBody = settings.match(/function learningPoolKey[\s\S]*?\n}/)?.[0] ?? "";
+  // Listening carries no grammar topic and keeps its own queue; the two written
+  // modes still deliberately share one.
+  assert.match(poolKeyBody, /settings\.mode === "audio"/);
+  assert.doesNotMatch(poolKeyBody, /settings\.mode === "recall"/);
 });
 
 test("health endpoint reports readiness", async () => {
@@ -116,7 +122,7 @@ test("question API stays playable without a server key", async () => {
 
   const statusResponse = await invokeWorker(worker, new Request("http://localhost/api/questions/status"), environment, context);
   assert.equal(statusResponse.status, 200);
-  assert.deepEqual(await statusResponse.json(), { ready: false });
+  assert.deepEqual(await statusResponse.json(), { ready: false, speech: false });
 
   const generationResponse = await invokeWorker(worker,
     new Request("http://localhost/api/questions/generate", {
@@ -204,7 +210,7 @@ test("AITunnel batches are accepted only when all eight questions validate", asy
       environment,
       context,
     );
-    assert.deepEqual(await readyResponse.json(), { ready: true });
+    assert.deepEqual(await readyResponse.json(), { ready: true, speech: false });
     const validResponse = await invokeWorker(worker,
       new Request("http://localhost/api/questions/generate", {
         method: "POST",
