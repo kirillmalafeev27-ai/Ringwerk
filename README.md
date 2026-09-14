@@ -51,21 +51,29 @@ AITunnel вызывается только на сервере: для гене�
 Репозиторий готов к Combined Service из корневого `Dockerfile`:
 
 - build type: `Dockerfile`, context `/`;
-- public HTTP port: `3000`;
-- readiness/liveness: `GET /healthz` на порту `3000`;
+- public HTTP port: любой номер в port entry — Northflank **не** подставляет `$PORT`, поэтому без `PORT`/`PORTS` контейнер слушает сразу `8080` и `3000`, и любой из этих номеров в entry доходит до приложения. Для другого номера задайте `PORT` (или `PORTS` через запятую) в переменных сервиса;
+- readiness/liveness: `GET /healthz` на том же порту;
 - runtime secret: `AITUNNEL_API_KEY`; необязательный — `ELEVENLABS_API_KEY` для озвучки аудирования;
 - необязательные runtime variables перечислены в `.env.example`;
 - одна реплика для in-memory кэша пакетов (при масштабировании нужен общий Redis-lock/cache).
-- run command можно не задавать (`node server.js` из `CMD`), но `npm start` и `npm run start:northflank` внутри образа тоже работают.
+- run command можно не задавать (`node northflank-serve.mjs` из `CMD`), но `npm start` и `npm run start:northflank` внутри образа тоже работают.
 
-Контейнер собирает отдельный vinext standalone runtime с `DEPLOY_TARGET=node`, слушает `0.0.0.0:$PORT` и не содержит `.env`-файлы. Обычная сборка без `DEPLOY_TARGET=node` остаётся Cloudflare/Sites-сборкой.
+Контейнер собирает отдельный vinext standalone runtime с `DEPLOY_TARGET=node`, слушает на `0.0.0.0` и не содержит `.env`-файлы. Обычная сборка без `DEPLOY_TARGET=node` остаётся Cloudflare/Sites-сборкой.
 
 Если сервис собирается из репозитория, а не из `Dockerfile` (buildpack/Git-сборка), то:
 
 - build command: `npm ci --no-audit --no-fund && npm run build:node`;
 - run command: `npm run start:northflank`.
 
-`npm run start:northflank` подставляет `NODE_ENV=production`, `HOST=0.0.0.0` и `PORT=3000`, если платформа их не задала, и сам собирает standalone-выход, если сборка прошла без `DEPLOY_TARGET=node`.
+`npm run start:northflank` подставляет `NODE_ENV=production` и `HOST=0.0.0.0`, разбирает `PORT`/`PORTS`, пишет в лог итоговый список портов и сам собирает standalone-выход, если сборка прошла без `DEPLOY_TARGET=node`.
+
+### Ingress отвечает `Connection refused`
+
+`upstream connect error ... Connection refused` приходит от прокси Northflank, а не от приложения: контейнер поднялся, но на порту, куда постучался прокси, никто не слушает. По порядку:
+
+1. Сервис собирается из ветки, где есть корневой `Dockerfile` и `scripts/start-northflank.mjs`? Без них buildpack запустит `npm start`, а это Cloudflare-режим, который слушает `127.0.0.1:8787` и до ingress не доходит.
+2. Номер в port entry совпадает с тем, что в логе старта: `[northflank] PORT=... PORTS=... -> binding ... on 0.0.0.0`.
+3. Если номер нестандартный — задайте `PORT` или `PORTS` в переменных сервиса и передеплойте.
 
 ## Проверка
 
