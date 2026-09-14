@@ -1,4 +1,9 @@
 import {
+  exerciseFormatFor,
+  qualityRules,
+  topicRuleFor,
+} from "@/lib/exercise-formats";
+import {
   DEFAULT_LEARNING_SETTINGS,
   GRAMMAR_TOPICS,
   LANGUAGE_LEVELS,
@@ -196,6 +201,8 @@ function wordOrderExample(prompt: string, isSubordinate: boolean) {
 function buildMessages(spec: QuestionSpec) {
   const wordOrderPrompt = wordOrderInstruction(spec.grammarTopic);
   const isSubordinate = /nebensatz/iu.test(spec.grammarTopic);
+  const format = exerciseFormatFor(spec.grammarTopic);
+  const topicRule = topicRuleFor(spec.grammarTopic);
   return [
     {
       role: "system",
@@ -217,6 +224,12 @@ function buildMessages(spec: QuestionSpec) {
         grammarTopic: spec.grammarTopic,
         count: spec.count,
         exclude: spec.exclude,
+        exerciseFormat: format.id,
+        // The German rule sheet is what keeps an item solvable only through its
+        // own grammar topic, so it travels with every request.
+        formatShape: format.shape,
+        qualityRules: qualityRules(spec.grammarTopic),
+        ...(topicRule ? { topicRule } : {}),
         requirements: [
           "questions содержит ровно count объектов",
           "в каждом объекте ровно поля prompt, context, translation, options, correct, correctAnswer, rule",

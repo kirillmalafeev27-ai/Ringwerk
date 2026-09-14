@@ -1,4 +1,14 @@
+import { EXERCISE_FORMATS, exerciseFormatFor } from "@/lib/exercise-formats";
 import type { LearningSettings } from "@/lib/learning-settings";
+
+export {
+  EXERCISE_FORMATS,
+  exerciseFormatFor,
+  usesEveryFragment,
+  wordOrderFragments,
+  wordOrderInstruction,
+} from "@/lib/exercise-formats";
+export type { ExerciseFormat, ExerciseFormatId } from "@/lib/exercise-formats";
 
 export type GameQuestion = {
   id: string;
@@ -44,40 +54,8 @@ const FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
   { level: "B2", lexicalTopic: "Umwelt & Klimawandel", grammarTopic: "Wortstellung im Nebensatz", prompt: "Соберите из всех частей придаточное предложение.", context: "Wir wissen, / dass / die Stadt / viel / investiert / hat", translation: "Мы знаем, что город много инвестировал.", options: ["Wir wissen, dass die Stadt viel investiert hat.", "Wir wissen, dass die Stadt hat viel investiert.", "Wir wissen, dass hat die Stadt viel investiert.", "Wir wissen, dass die Stadt viel hat investiert."], correct: 0, rule: "В придаточном вспомогательный глагол идёт последним, после Partizip II: dass die Stadt viel investiert hat." },
 ];
 
-// Word-order drills show the parts of a sentence instead of a gap, so they
-// need their own wording — and the parts have to add up to the answer.
-const WORD_ORDER_INSTRUCTIONS: Record<string, string> = {
-  "Wortstellung im Hauptsatz": "Соберите из всех частей главное предложение.",
-  "Wortstellung im Nebensatz": "Соберите из всех частей придаточное предложение.",
-};
-
-export function wordOrderInstruction(grammarTopic: string | undefined) {
-  return grammarTopic ? WORD_ORDER_INSTRUCTIONS[grammarTopic] : undefined;
-}
-
-export function isWordOrderQuestion(question: Pick<GameQuestion, "grammarTopic">) {
-  return wordOrderInstruction(question.grammarTopic) !== undefined;
-}
-
-export function wordOrderFragments(context: string) {
-  return context.split("/").map((fragment) => fragment.trim()).filter(Boolean);
-}
-
-function sortedWords(value: string) {
-  return value
-    .replace(/[.,!?;:…"«»()]/gu, " ")
-    .split(/[/\s]+/u)
-    .map((word) => word.toLocaleLowerCase("de-DE"))
-    .filter(Boolean)
-    .sort((left, right) => left.localeCompare(right, "de"));
-}
-
-export function usesEveryFragment(context: string, answer: string) {
-  const fragments = sortedWords(context);
-  const words = sortedWords(answer);
-  return fragments.length > 0
-    && fragments.length === words.length
-    && fragments.every((word, index) => word === words[index]);
+export function exerciseFormatOf(question: Pick<GameQuestion, "grammarTopic">) {
+  return exerciseFormatFor(question.grammarTopic);
 }
 
 export const FALLBACK_QUESTIONS: GameQuestion[] = FALLBACK_DATA.map((question) => ({
@@ -110,7 +88,7 @@ export function normalizeQuestion(candidate: unknown, sequence = 0): GameQuestio
   const sourcePrompt = cleanText(source.prompt ?? source.question ?? source.instruction, 360);
   const sourceContext = cleanText(source.context ?? source.sentence ?? source.display, 360);
   const context = sourceContext || sourcePrompt;
-  const prompt = sourceContext ? sourcePrompt : "Вставьте правильную немецкую форму.";
+  const prompt = sourceContext ? sourcePrompt : EXERCISE_FORMATS.gap.instruction;
   const translation = cleanText(source.translation ?? source.russianTranslation ?? source.ru, 360);
   const rule = cleanText(source.rule ?? source.explanation ?? source.rationale ?? source.grammarTopic, 360);
   const rawOptions = source.options ?? source.answers ?? source.choices;

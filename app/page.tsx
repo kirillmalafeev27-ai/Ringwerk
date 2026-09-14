@@ -14,7 +14,7 @@ import {
   type LexicalTopic,
   type QuestionMode,
 } from "@/lib/learning-settings";
-import { isWordOrderQuestion } from "@/lib/questions";
+import { exerciseFormatOf } from "@/lib/questions";
 import { useQuestionPool } from "./use-question-pool";
 
 const TAU = Math.PI * 2;
@@ -657,7 +657,7 @@ export default function Home() {
     restartQuestions,
     releaseQuestion,
   } = useQuestionPool(sessionSettings, settingsReady && phase !== "setup");
-  const isWordOrderTask = isWordOrderQuestion(question);
+  const questionFormat = exerciseFormatOf(question);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recallInputRef = useRef<HTMLInputElement>(null);
   const worldRef = useRef<WorldState>(createWorld());
@@ -1868,7 +1868,7 @@ export default function Home() {
                       type="text"
                       value={recallAnswer}
                       onChange={(event) => setRecallAnswer(event.target.value)}
-                      placeholder={isWordOrderTask ? "Напиши предложение целиком" : "Напиши слово или фразу"}
+                      placeholder={questionFormat.recallPlaceholder}
                       autoComplete="off"
                       spellCheck={false}
                       maxLength={600}
@@ -1940,12 +1940,8 @@ export default function Home() {
               {!feedback && !isEvaluating && (
                 <span>
                   {sessionSettings.mode === "recall"
-                    ? isWordOrderTask
-                      ? "Собери предложение и введи его целиком. До отправки импульс уже сгорает."
-                      : "Введи ответ без вариантов. До отправки импульс уже сгорает."
-                    : isWordOrderTask
-                      ? "Выбери вариант с правильным порядком слов. Импульс, таймер и механизм уже идут."
-                      : "Выбери форму. Импульс, таймер и механизм уже идут."}
+                    ? `${questionFormat.hints.recall} До отправки импульс уже сгорает.`
+                    : `${questionFormat.hints.recognition} Импульс, таймер и механизм уже идут.`}
                 </span>
               )}
             </div>
