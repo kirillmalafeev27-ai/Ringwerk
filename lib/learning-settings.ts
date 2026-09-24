@@ -110,6 +110,9 @@ export const GRAMMAR_TOPICS = [
   "als vs. wenn",
   "Partizip I und II",
   "Genitivpräpositionen",
+  // Vocabulary rather than grammar, but it is what the drill tests, so it is
+  // picked in the same slot. Keep it last: the groups below index this list.
+  "Wortfelder & Synonyme",
 ] as const;
 
 export type LanguageLevel = (typeof LANGUAGE_LEVELS)[number];
@@ -140,9 +143,10 @@ export const GRAMMAR_TOPIC_GROUPS: readonly TopicGroup<GrammarTopic>[] = [
   { label: "Глаголы", topics: GRAMMAR_TOPICS.slice(6, 13) },
   { label: "Падежи, артикли и местоимения", topics: GRAMMAR_TOPICS.slice(13, 23) },
   { label: "Формы слов", topics: GRAMMAR_TOPICS.slice(23, 28) },
-  { label: "Предлоги", topics: [...GRAMMAR_TOPICS.slice(28, 33), GRAMMAR_TOPICS.at(-1)!] },
+  { label: "Предлоги", topics: [...GRAMMAR_TOPICS.slice(28, 33), "Genitivpräpositionen"] },
   { label: "Построение предложения", topics: GRAMMAR_TOPICS.slice(33, 44) },
-  { label: "Продвинутая грамматика", topics: GRAMMAR_TOPICS.slice(44, -1) },
+  { label: "Продвинутая грамматика", topics: GRAMMAR_TOPICS.slice(44, 50) },
+  { label: "Лексика", topics: ["Wortfelder & Synonyme"] },
 ];
 
 export const DEFAULT_LEARNING_SETTINGS: LearningSettings = {

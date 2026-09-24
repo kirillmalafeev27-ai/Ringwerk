@@ -2,9 +2,19 @@ import {
   AUDIO_DISPLAY_CONTEXT,
   AUDIO_QUALITY_RULES,
   EXERCISE_FORMATS,
+  WORD_FIELD_SYNONYM_COUNT,
+  WORD_FIELD_TOPIC,
   exerciseFormatFor,
+  isWordFieldTopic,
+  pickWordFields,
   qualityRules,
   topicRuleFor,
+  wordFieldFor,
+  wordFieldInstruction,
+  wordFieldQualityRules,
+  wordFieldSynonymOf,
+  wordFieldsForLevel,
+  type WordField,
 } from "@/lib/exercise-formats";
 import {
   DEFAULT_LEARNING_SETTINGS,
@@ -208,6 +218,17 @@ function wordOrderExample(prompt: string, isSubordinate: boolean) {
     };
 }
 
+const WORD_FIELD_EXAMPLE = {
+  wordField: "sagen",
+  context: "Das Baby schläft, deshalb ___ wir nur noch.",
+  translation: "Малыш спит, поэтому мы теперь только говорим.",
+  options: ["flüstern", "rufen", "murmeln", "behaupten"],
+  optionBases: ["flüstern", "rufen", "murmeln", "behaupten"],
+  correct: 0,
+  correctAnswer: "flüstern",
+  rule: "flüstern — говорить очень тихо, почти на ухо; на это указывает «Das Baby schläft».",
+};
+
 const AUDIO_EXAMPLE = {
   audioText: "Ich hole das Rezept in der Apotheke ab.",
   options: [
@@ -260,8 +281,70 @@ function buildAudioMessages(spec: QuestionSpec) {
   ];
 }
 
+// Every item in a package drills a synonym no other item has used, so the
+// package needs more synonyms than items: two fields at a minimum, a third
+// once a batch runs past ten.
+function wordFieldsPerPackage(count: number) {
+  return Math.max(2, Math.ceil(count / WORD_FIELD_SYNONYM_COUNT));
+}
+
+// The catalogue rotates as the player works through it: the exclude list grows
+// with every answered item, so the next package opens on the next fields.
+function wordFieldSeed(spec: QuestionSpec) {
+  let hash = spec.exclude.length;
+  for (const character of spec.lexicalTopic) {
+    hash = (hash * 31 + character.codePointAt(0)!) % 100_000;
+  }
+  return hash;
+}
+
+function buildWordFieldMessages(spec: QuestionSpec) {
+  const fields = pickWordFields(spec.level, wordFieldSeed(spec), wordFieldsPerPackage(spec.count));
+  const topicRule = topicRuleFor(WORD_FIELD_TOPIC);
+  return [
+    { role: "system", content: SYSTEM_PROMPT },
+    {
+      role: "user",
+      content: JSON.stringify({
+        task: "Создать уникальный пакет упражнений на синонимы",
+        level: spec.level,
+        lexicalTopic: spec.lexicalTopic,
+        count: spec.count,
+        exclude: spec.exclude,
+        exerciseFormat: EXERCISE_FORMATS["word-field"].id,
+        formatShape: EXERCISE_FORMATS["word-field"].shape,
+        // The senses are what makes one synonym right and three wrong, so the
+        // whole field travels with the request, not just its name.
+        wordFields: fields.map((field) => ({
+          base: field.base,
+          gloss: field.gloss,
+          synonyms: field.synonyms,
+        })),
+        qualityRules: wordFieldQualityRules(fields),
+        ...(topicRule ? { topicRule } : {}),
+        requirements: [
+          "questions содержит ровно count объектов",
+          "в каждом объекте ровно поля wordField, context, translation, options, optionBases, correct, correctAnswer, rule",
+          "wordField — дословно base одного из wordFields",
+          "context — естественная немецкая фраза с ровно одним пропуском ___ и ясным сигналом, который требует одного конкретного синонима",
+          "options — четыре разные формы четырёх синонимов ЭТОГО поля, все в одной грамматической форме",
+          "optionBases — словарные формы тех же синонимов в том же порядке, дословно из wordFields",
+          "correct — индекс единственного подходящего синонима от 0 до 3",
+          "correctAnswer — точная копия options[correct]",
+          "translation — полный русский перевод, где на месте пропуска стоит нейтральное gloss, а не нюанс",
+          "rule — по-русски: нюанс правильного синонима и сигнал в предложении, который его требует",
+          `у каждого поля правильными ответами должны побывать все ${WORD_FIELD_SYNONYM_COUNT} синонима, поэтому не повторяй один и тот же правильный синоним`,
+          "лексика строго относится к lexicalTopic, сложность не выше level, не повторяй exclude",
+        ],
+        output: { questions: [WORD_FIELD_EXAMPLE] },
+      }),
+    },
+  ];
+}
+
 function buildMessages(spec: QuestionSpec) {
   if (spec.mode === "audio") return buildAudioMessages(spec);
+  if (isWordFieldTopic(spec.grammarTopic)) return buildWordFieldMessages(spec);
   const wordOrderPrompt = wordOrderInstruction(spec.grammarTopic);
   const isSubordinate = /nebensatz/iu.test(spec.grammarTopic);
   const format = exerciseFormatFor(spec.grammarTopic);
@@ -353,6 +436,11 @@ function parseResponse(raw: string, spec: QuestionSpec) {
   }
 
   const isAudio = spec.mode === "audio";
+  const isWordField = !isAudio && isWordFieldTopic(spec.grammarTopic);
+  const levelFields = new Set(wordFieldsForLevel(spec.level).map((field) => field.base));
+  // One synonym may be the answer once per package: that is what spreads a
+  // batch over all five of a field's synonyms instead of its easiest two.
+  const drilled = new Set<string>();
   const wordOrderPrompt = isAudio ? undefined : wordOrderInstruction(spec.grammarTopic);
   const excluded = new Set(spec.exclude.map((text) => text.normalize("NFKC").toLocaleLowerCase("de-DE")));
   const seen = new Set<string>();
@@ -361,12 +449,30 @@ function parseResponse(raw: string, spec: QuestionSpec) {
     const source = record && typeof record === "object" && !Array.isArray(record)
       ? record as Record<string, unknown>
       : {};
+    // A synonym item is only a synonym item if its four options really are four
+    // synonyms of one catalogued field, so the field is resolved before the
+    // record is allowed to become a question. The surface forms stay the
+    // model's business, exactly as the conjugations in a gap item do.
+    let field: WordField | undefined;
+    let optionBases: string[] = [];
+    if (isWordField) {
+      field = wordFieldFor(compactText(source.wordField ?? source.wordFieldBase, 40));
+      if (!field || !levelFields.has(field.base)) continue;
+      const declared = Array.isArray(source.optionBases) ? source.optionBases : [];
+      if (declared.length !== 4) continue;
+      const resolved = declared.map((value) => wordFieldSynonymOf(field!, compactText(value, 40)));
+      if (resolved.some((entry) => !entry)) continue;
+      optionBases = resolved.map((entry) => entry!.word);
+      if (new Set(optionBases).size !== 4) continue;
+    }
     // A listening item only ever ships the spoken sentence and its options, so
     // the fields the player reads are supplied here rather than by the model.
     const question = normalizeQuestion(
       isAudio
         ? { ...source, prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", rule: compactText(source.audioText, 360) }
-        : record,
+        : field
+          ? { ...source, prompt: wordFieldInstruction(field.base), wordFieldBase: field.base }
+          : record,
       index,
     );
     const correctAnswer = compactText(source.correctAnswer, 100);
@@ -408,6 +514,11 @@ function parseResponse(raw: string, spec: QuestionSpec) {
     const fingerprint = questionFingerprint(enriched);
     if (seen.has(fingerprint)) continue;
     seen.add(fingerprint);
+    if (field) {
+      const drillKey = `${field.base}|${optionBases[question.correct]}`;
+      if (drilled.has(drillKey)) continue;
+      drilled.add(drillKey);
+    }
     questions.push(enriched);
     if (questions.length === spec.count) break;
   }

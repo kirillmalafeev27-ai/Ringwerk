@@ -1,20 +1,37 @@
 import {
   AUDIO_DISPLAY_CONTEXT,
   EXERCISE_FORMATS,
+  WORD_FIELD_TOPIC,
   exerciseFormatFor,
-} from "@/lib/exercise-formats";
-import type { LearningSettings } from "@/lib/learning-settings";
+  isWordFieldTopic,
+  wordFieldFor,
+  wordFieldInstruction,
+} from "./exercise-formats.ts";
+import type { LearningSettings } from "./learning-settings.ts";
 
 export {
   AUDIO_DISPLAY_CONTEXT,
   EXERCISE_FORMATS,
+  WORD_FIELDS,
+  WORD_FIELD_TOPIC,
   exerciseHint,
   exerciseFormatFor,
+  isWordFieldTopic,
   usesEveryFragment,
+  wordFieldBank,
+  wordFieldFor,
+  wordFieldInstruction,
+  wordFieldSynonymOf,
+  wordFieldsForLevel,
   wordOrderFragments,
   wordOrderInstruction,
-} from "@/lib/exercise-formats";
-export type { ExerciseFormat, ExerciseFormatId } from "@/lib/exercise-formats";
+} from "./exercise-formats.ts";
+export type {
+  ExerciseFormat,
+  ExerciseFormatId,
+  WordField,
+  WordFieldSynonym,
+} from "./exercise-formats.ts";
 
 export type GameQuestion = {
   id: string;
@@ -29,6 +46,8 @@ export type GameQuestion = {
   grammarTopic?: string;
   /** Listening drills only: the German sentence that is spoken, never printed. */
   audioText?: string;
+  /** Synonym drills only: the worn-out word the four synonyms stand in for. */
+  wordFieldBase?: string;
 };
 
 const FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
@@ -76,11 +95,29 @@ const AUDIO_FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
   { level: "B2", lexicalTopic: "Termine & Zeitmanagement", prompt: EXERCISE_FORMATS.audio.instruction, context: AUDIO_DISPLAY_CONTEXT, translation: "", audioText: "Je länger wir warten, desto schwieriger wird die Entscheidung.", options: ["Чем дольше мы ждём, тем труднее становится решение.", "Чем дольше мы ждём, тем труднее становится обсуждение.", "Чем дольше мы советуемся, тем труднее становится решение.", "Чем дольше мы ждём, тем надёжнее становится решение."], correct: 0, rule: "Je länger wir warten, desto schwieriger wird die Entscheidung." },
 ];
 
+// Synonym reserves. `translation` keeps the neutral base word on purpose: name
+// the nuance in Russian and the item answers itself.
+const WORD_FIELD_FALLBACK_DATA: Array<Omit<GameQuestion, "id">> = [
+  { level: "A1", lexicalTopic: "Familie & Beziehungen", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "sagen", prompt: wordFieldInstruction("sagen"), context: "Das Baby schläft, deshalb ___ wir nur noch.", translation: "Малыш спит, поэтому мы теперь только говорим.", options: ["flüstern", "rufen", "murmeln", "behaupten"], correct: 0, rule: "flüstern — говорить очень тихо, почти на ухо; на это указывает «Das Baby schläft»." },
+  { level: "A1", lexicalTopic: "Reisen & Tourismus", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "gehen", prompt: wordFieldInstruction("gehen"), context: "Wir haben viel Zeit und ___ durch die Altstadt.", translation: "У нас много времени, и мы идём по старому городу.", options: ["schlendern", "rennen", "eilen", "stapfen"], correct: 0, rule: "schlendern — идти не спеша, прогуливаясь; «viel Zeit» исключает спешку." },
+  { level: "A1", lexicalTopic: "Essen & Ernährung", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "gut", prompt: wordFieldInstruction("gut"), context: "Der Kuchen war wirklich ___, alle wollten noch ein Stück.", translation: "Пирог был действительно хорошим, все хотели ещё кусок.", options: ["lecker", "solide", "brauchbar", "angenehm"], correct: 0, rule: "lecker — вкусный, и только о еде или напитках; речь о пироге." },
+  { level: "A1", lexicalTopic: "Essen & Ernährung", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "essen", prompt: wordFieldInstruction("essen"), context: "Die Soße sieht gut aus — darf ich sie kurz ___?", translation: "Соус выглядит хорошо — можно я его немного поем?", options: ["probieren", "schlingen", "naschen", "speisen"], correct: 0, rule: "probieren — взять маленький кусочек на пробу; на это указывает «kurz»." },
+  { level: "A2", lexicalTopic: "Natur & Tiere", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "sehen", prompt: wordFieldInstruction("sehen"), context: "Der Forscher ___ die Vögel jeden Morgen zwei Stunden lang.", translation: "Исследователь видит птиц каждое утро по два часа.", options: ["beobachtet", "bemerkt", "erblickt", "glotzt"], correct: 0, rule: "beobachten — долго и внимательно наблюдать; длительность задаёт «zwei Stunden lang»." },
+  { level: "A2", lexicalTopic: "Essen & Ernährung", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "machen", prompt: wordFieldInstruction("machen"), context: "Am Wochenende ___ mein Vater immer eine Suppe.", translation: "На выходных мой отец всегда делает суп.", options: ["kocht", "bastelt", "produziert", "verursacht"], correct: 0, rule: "kochen — готовить еду на плите; в предложении речь о супе." },
+  { level: "B1", lexicalTopic: "Feste, Traditionen & Feiertage", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "geben", prompt: wordFieldInstruction("geben"), context: "Feierlich, vor allen Gästen, ___ der Bürgermeister dem Gewinner den Pokal.", translation: "Торжественно, перед всеми гостями, мэр дал победителю кубок.", options: ["überreichte", "reichte", "schenkte", "spendete"], correct: 0, rule: "überreichen — вручить торжественно; на это указывает «Feierlich, vor allen Gästen»." },
+  { level: "B2", lexicalTopic: "Termine & Zeitmanagement", grammarTopic: WORD_FIELD_TOPIC, wordFieldBase: "wichtig", prompt: wordFieldInstruction("wichtig"), context: "Der Termin ist ___ — die Unterlagen müssen noch heute im Amt sein.", translation: "Этот срок важный — документы должны быть в ведомстве ещё сегодня.", options: ["dringend", "wesentlich", "maßgeblich", "unverzichtbar"], correct: 0, rule: "dringend — срочный, не терпит отлагательства; срок задаёт «noch heute»." },
+];
+
+// A synonym drill announces itself through its own field, so a reserve item
+// reaches the right shape even without the grammar topic beside it.
 export function exerciseFormatOf(
-  question: Pick<GameQuestion, "grammarTopic" | "audioText">,
+  question: Pick<GameQuestion, "grammarTopic" | "audioText" | "wordFieldBase">,
   mode?: string,
 ) {
-  return exerciseFormatFor(question.grammarTopic, question.audioText ? "audio" : mode);
+  return exerciseFormatFor(
+    question.wordFieldBase ? WORD_FIELD_TOPIC : question.grammarTopic,
+    question.audioText ? "audio" : mode,
+  );
 }
 
 function toReserve(question: Omit<GameQuestion, "id">): GameQuestion {
@@ -93,6 +130,8 @@ function toReserve(question: Omit<GameQuestion, "id">): GameQuestion {
 export const FALLBACK_QUESTIONS: GameQuestion[] = FALLBACK_DATA.map(toReserve);
 
 export const AUDIO_FALLBACK_QUESTIONS: GameQuestion[] = AUDIO_FALLBACK_DATA.map(toReserve);
+
+export const WORD_FIELD_FALLBACK_QUESTIONS: GameQuestion[] = WORD_FIELD_FALLBACK_DATA.map(toReserve);
 
 function cleanText(value: unknown, maximum: number) {
   if (typeof value !== "string") return "";
@@ -138,6 +177,9 @@ export function normalizeQuestion(candidate: unknown, sequence = 0): GameQuestio
   const tuple = options as GameQuestion["options"];
   const correct = numericCorrect as GameQuestion["correct"];
   const audioText = cleanText(source.audioText ?? source.audio ?? source.satz, 360) || undefined;
+  // Resolving against the catalogue rather than trusting the label keeps the
+  // word bank the player sees in step with the four options.
+  const wordField = wordFieldFor(cleanText(source.wordFieldBase ?? source.wordField, 40));
   const identity = questionFingerprint({ context, options: tuple, audioText });
   return {
     id: cleanText(source.id, 100) || `question-${hashText(identity)}-${sequence}`,
@@ -151,6 +193,7 @@ export function normalizeQuestion(candidate: unknown, sequence = 0): GameQuestio
     lexicalTopic: cleanText(source.lexicalTopic ?? source.topic, 80) || undefined,
     grammarTopic: cleanText(source.grammarTopic, 80) || undefined,
     audioText,
+    wordFieldBase: wordField?.base,
   };
 }
 
@@ -171,7 +214,11 @@ export function fallbackQuestionsFor(
   settings: Pick<LearningSettings, "level" | "lexicalTopic" | "grammarTopic"> & { mode?: string },
 ) {
   const levelRank = { A1: 0, A2: 1, B1: 2, B2: 3 } as const;
-  const pool = settings.mode === "audio" ? AUDIO_FALLBACK_QUESTIONS : FALLBACK_QUESTIONS;
+  const pool = settings.mode === "audio"
+    ? AUDIO_FALLBACK_QUESTIONS
+    : isWordFieldTopic(settings.grammarTopic)
+      ? WORD_FIELD_FALLBACK_QUESTIONS
+      : FALLBACK_QUESTIONS;
   const eligible = pool.filter(
     (question) => levelRank[question.level ?? "A1"] <= levelRank[settings.level],
   );

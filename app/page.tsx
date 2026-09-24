@@ -15,7 +15,7 @@ import {
   type LexicalTopic,
   type QuestionMode,
 } from "@/lib/learning-settings";
-import { exerciseFormatOf, exerciseHint } from "@/lib/questions";
+import { exerciseFormatOf, exerciseHint, wordFieldBank, wordFieldFor } from "@/lib/questions";
 import { playQuestionAudio, stopQuestionAudio } from "./question-audio";
 import { useQuestionPool } from "./use-question-pool";
 
@@ -667,6 +667,10 @@ export default function Home() {
   } = useQuestionPool(sessionSettings, settingsReady && phase !== "setup");
   const questionFormat = exerciseFormatOf(question, sessionSettings.mode);
   const isListening = questionFormat.id === "audio";
+  // The synonym drill shows all five members of the field, not just the four on
+  // the buttons: the fifth is what makes it a word field rather than a list of
+  // answers, and in free recall it is the only thing to aim at.
+  const wordField = wordFieldFor(question.wordFieldBase);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const recallInputRef = useRef<HTMLInputElement>(null);
   const worldRef = useRef<WorldState>(createWorld());
@@ -1854,6 +1858,12 @@ export default function Home() {
             </div>
             <p className="quiz-instruction">{question.prompt}</p>
             <h2 id="quiz-heading" lang={isListening ? undefined : "de"}>{question.context}</h2>
+            {wordField && (
+              <p className="quiz-word-field">
+                <span>Wortfeld «{wordField.base}»</span>
+                <em lang="de">{wordFieldBank(wordField).join(" · ")}</em>
+              </p>
+            )}
             {isListening && question.audioText && (
               <button
                 type="button"

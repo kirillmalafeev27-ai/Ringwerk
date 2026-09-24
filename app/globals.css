@@ -1192,6 +1192,32 @@ h1 {
   background: rgba(26, 64, 56, 0.96);
 }
 
+.quiz-word-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 9px;
+  margin: 8px 0 10px;
+  padding: 7px 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(10, 26, 24, 0.55);
+  font-size: 0.62rem;
+  line-height: 1.35;
+}
+
+.quiz-word-field span {
+  color: #78918b;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.quiz-word-field em {
+  color: var(--ink);
+  font-style: normal;
+  font-weight: 650;
+}
+
 .quiz-translation {
   margin: 0 0 10px;
   color: #78918b;
