@@ -11,10 +11,52 @@ let playbackToken = 0;
 let activeAudio: HTMLAudioElement | null = null;
 let activeUrl = "";
 
+// iOS only starts audio from inside a user gesture, and the first thing a
+// listening drill does is await the mp3 — by the time it arrives the gesture is
+// over and play() is refused, which is why the mode was silent on an iPhone.
+// One element, unlocked once while a finger is still down, is allowed to speak
+// for the rest of the session, so playback reuses it instead of building a
+// fresh Audio() that was never granted anything.
+const SILENT_CLIP =
+  "data:audio/mpeg;base64,/+MYxAAAAANIAUAAAASEEB/jwOFM/0MM/90b/+RhST//w4NFwOjf///PZu////9lns5GFDv//l9GlUIEEIAAAgIg8Ir/JGq3/+MYxDsLIj5QMYcoAP0dv9HIjUcH//yYSg+CIbkGP//8w0bLVjUP///3Z0x5QCAv/yLjwtGKTEFNRTMuOTeqqqqqqqqqqqqq/+MYxEkNmdJkUYc4AKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+
+let unlockedPlayer: HTMLAudioElement | null = null;
+let speechUnlocked = false;
+
+/**
+ * Must be called from inside a real user gesture — a tap or a key press — and
+ * costs nothing after the first time.
+ */
+export function unlockQuestionAudio() {
+  if (typeof window === "undefined") return;
+  if (!unlockedPlayer) {
+    const player = new Audio();
+    player.preload = "auto";
+    player.muted = true;
+    player.src = SILENT_CLIP;
+    void player.play().catch(() => {
+      // A refusal only means the gesture was not one iOS accepts; the element
+      // stays muted and silent, so the next tap simply tries again.
+    });
+    unlockedPlayer = player;
+  }
+  if (!speechUnlocked && "speechSynthesis" in window) {
+    // The browser voice is the fallback when the provider is unavailable, and
+    // its first utterance is gesture-bound too, so it is primed in silence.
+    const primer = new SpeechSynthesisUtterance(" ");
+    primer.volume = 0;
+    window.speechSynthesis.speak(primer);
+    speechUnlocked = true;
+  }
+}
+
 function releaseActive() {
   if (activeAudio) {
     activeAudio.pause();
-    activeAudio.src = "";
+    // The unlocked element keeps its permission across sources, so it is
+    // emptied rather than thrown away.
+    activeAudio.removeAttribute("src");
+    activeAudio.load();
     activeAudio = null;
   }
   if (activeUrl) {
@@ -77,12 +119,14 @@ export async function playQuestionAudio(text: string) {
 
   try {
     const url = URL.createObjectURL(new Blob([clip.slice(0)], { type: "audio/mpeg" }));
-    const audio = new Audio(url);
+    const audio = unlockedPlayer ?? new Audio();
+    audio.muted = false;
+    audio.src = url;
     activeAudio = audio;
     activeUrl = url;
     audio.addEventListener("ended", () => {
       if (activeAudio === audio) releaseActive();
-    });
+    }, { once: true });
     await audio.play();
   } catch {
     // Autoplay refusals and decode errors both leave the browser voice, which

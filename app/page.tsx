@@ -16,7 +16,7 @@ import {
   type QuestionMode,
 } from "@/lib/learning-settings";
 import { exerciseFormatOf, exerciseHint, wordFieldBank, wordFieldFor } from "@/lib/questions";
-import { playQuestionAudio, stopQuestionAudio } from "./question-audio";
+import { playQuestionAudio, stopQuestionAudio, unlockQuestionAudio } from "./question-audio";
 import { useQuestionPool } from "./use-question-pool";
 
 const MODE_DESCRIPTIONS: Record<QuestionMode, string> = {
@@ -725,6 +725,22 @@ export default function Home() {
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
   }, [phase]);
+
+  // Everything audible on iOS has to be granted inside a real gesture, and a
+  // run makes most of its noise on a timer, so the very first touch of the
+  // session buys the permission for all of it.
+  useEffect(() => {
+    const unlock = () => {
+      unlockQuestionAudio();
+      if (audioRef.current?.state === "suspended") void audioRef.current.resume();
+    };
+    window.addEventListener("pointerdown", unlock, { once: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;

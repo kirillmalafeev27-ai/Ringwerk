@@ -53,6 +53,33 @@ button,
   -webkit-tap-highlight-color: transparent;
 }
 
+/* --- Touch devices ------------------------------------------------------
+   Safari on iOS holds every tap for ~300ms waiting to see whether a second
+   one follows, and zooms the page when it does. Against a burning impulse
+   that reads as a dead button, so every control declares its own gesture
+   handling and nothing waits for a double tap. */
+button,
+select,
+input,
+textarea,
+label,
+kbd,
+[role="button"],
+a[href] {
+  touch-action: manipulation;
+}
+
+html {
+  /* Landscape must not reflow the type and push the answers off screen. */
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  /* A run never scrolls the arena, so rubber-banding and pull-to-refresh can
+     only interrupt it. */
+  overscroll-behavior: none;
+}
+
 button:focus-visible {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
@@ -190,7 +217,14 @@ h1 {
   letter-spacing: 0.08em;
 }
 
-.sound-toggle:hover {
+@media (hover: hover) and (pointer: fine) {
+  .sound-toggle:hover {
+    color: var(--ink);
+    background: rgba(53, 224, 193, 0.07);
+  }
+}
+
+.sound-toggle:active {
   color: var(--ink);
   background: rgba(53, 224, 193, 0.07);
 }
@@ -354,8 +388,16 @@ h1 {
   transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
 }
 
-.entry-segmented button:hover,
-.entry-mode-grid button:hover {
+@media (hover: hover) and (pointer: fine) {
+  .entry-segmented button:hover,
+  .entry-mode-grid button:hover {
+    transform: translateY(-1px);
+    border-color: rgba(53, 224, 193, 0.52);
+  }
+}
+
+.entry-segmented button:active,
+.entry-mode-grid button:active {
   transform: translateY(-1px);
   border-color: rgba(53, 224, 193, 0.52);
 }
@@ -696,7 +738,14 @@ h1 {
     filter 140ms ease;
 }
 
-.primary-button:hover {
+@media (hover: hover) and (pointer: fine) {
+  .primary-button:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.1);
+  }
+}
+
+.primary-button:active {
   transform: translateY(-2px);
   filter: brightness(1.1);
 }
@@ -749,7 +798,14 @@ h1 {
   letter-spacing: 0.08em;
 }
 
-.secondary-button:hover {
+@media (hover: hover) and (pointer: fine) {
+  .secondary-button:hover {
+    border-color: var(--teal);
+    color: var(--ink);
+  }
+}
+
+.secondary-button:active {
   border-color: var(--teal);
   color: var(--ink);
 }
@@ -1187,7 +1243,14 @@ h1 {
     background 120ms ease;
 }
 
-.audio-replay:hover {
+@media (hover: hover) and (pointer: fine) {
+  .audio-replay:hover {
+    border-color: var(--teal);
+    background: rgba(26, 64, 56, 0.96);
+  }
+}
+
+.audio-replay:active {
   border-color: var(--teal);
   background: rgba(26, 64, 56, 0.96);
 }
@@ -1251,7 +1314,15 @@ h1 {
     transform 120ms ease;
 }
 
-.answer-grid button:hover:not(:disabled) {
+@media (hover: hover) and (pointer: fine) {
+  .answer-grid button:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--teal);
+    background: rgba(26, 64, 56, 0.96);
+  }
+}
+
+.answer-grid button:active:not(:disabled) {
   transform: translateY(-1px);
   border-color: var(--teal);
   background: rgba(26, 64, 56, 0.96);
@@ -1442,7 +1513,14 @@ h1 {
   letter-spacing: 0.05em;
 }
 
-.movement-grid button:hover:not(:disabled) {
+@media (hover: hover) and (pointer: fine) {
+  .movement-grid button:hover:not(:disabled) {
+    border-color: var(--cyan);
+    background: rgba(19, 62, 73, 0.94);
+  }
+}
+
+.movement-grid button:active:not(:disabled) {
   border-color: var(--cyan);
   background: rgba(19, 62, 73, 0.94);
 }
@@ -1516,7 +1594,15 @@ h1 {
   text-align: left;
 }
 
-.bonus-options button:hover {
+@media (hover: hover) and (pointer: fine) {
+  .bonus-options button:hover {
+    border-color: var(--bonus-color);
+    background: color-mix(in srgb, var(--bonus-color) 15%, var(--surface));
+    transform: translateY(-1px);
+  }
+}
+
+.bonus-options button:active {
   border-color: var(--bonus-color);
   background: color-mix(in srgb, var(--bonus-color) 15%, var(--surface));
   transform: translateY(-1px);
@@ -1635,7 +1721,14 @@ h1 {
   text-align: left;
 }
 
-.inventory-slots button:hover:not(:disabled) {
+@media (hover: hover) and (pointer: fine) {
+  .inventory-slots button:hover:not(:disabled) {
+    border-color: var(--bonus-color, var(--teal));
+    background: color-mix(in srgb, var(--bonus-color, #8da8a1) 12%, var(--surface));
+  }
+}
+
+.inventory-slots button:active:not(:disabled) {
   border-color: var(--bonus-color, var(--teal));
   background: color-mix(in srgb, var(--bonus-color, #8da8a1) 12%, var(--surface));
 }
@@ -2439,5 +2532,93 @@ h1 {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* --- Small screens: nothing tappable gets clipped -----------------------
+   The control panel was handed a fixed height and told to hide the overflow,
+   so on a 750x342 landscape phone the second row of answers fell outside it:
+   options 3 and 4 were simply not on the screen. The panel now sizes to the
+   controls it holds and scrolls when even that will not fit, and no target
+   goes under Apple's 44pt minimum — a 40px button is a miss waiting to
+   happen. */
+@media (max-width: 920px), (max-height: 700px) {
+  .game-shell:not([data-phase="setup"]) .control-panel {
+    grid-template-rows: auto auto auto;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-card,
+  .game-shell:not([data-phase="setup"]) .inventory-card {
+    min-height: 0;
+  }
+
+  .answer-grid button,
+  .movement-grid button,
+  .inventory-slots button,
+  .bonus-options button,
+  .game-shell:not([data-phase="setup"]) .answer-grid button,
+  .game-shell:not([data-phase="setup"]) .movement-grid button,
+  .game-shell:not([data-phase="setup"]) .inventory-slots button {
+    min-height: 44px;
+  }
+
+  .sound-toggle {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* A landscape phone has 342px of height in total, so the impulse meter drops
+   the threshold legend the HUD numbers already carry, and the answers spend
+   the width they do have instead of stacking off the bottom of the card. */
+@media (max-height: 700px) and (min-width: 561px) {
+  .game-shell:not([data-phase="setup"]) .impulse-thresholds {
+    display: none;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-translation {
+    display: none;
+  }
+
+  /* 342px of height has to hold a topbar, the inventory, a question and four
+     44pt answers. Everything the HUD already says twice goes, so the second
+     row of answers lands inside the card instead of below it — options 3 and
+     4 used to be off the screen entirely. */
+  .game-shell:not([data-phase="setup"]) .topbar {
+    min-height: 40px;
+    margin-bottom: 4px;
+  }
+
+  .game-shell:not([data-phase="setup"]) h1 {
+    font-size: 1.6rem;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-meta,
+  .game-shell:not([data-phase="setup"]) .inventory-head {
+    display: none;
+  }
+
+  .game-shell:not([data-phase="setup"]) .impulse-meter {
+    margin-top: 3px;
+    padding: 3px 7px;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-instruction {
+    margin: 3px 0 0;
+  }
+
+  .game-shell:not([data-phase="setup"]) .quiz-card h2 {
+    margin-block: 1px 2px;
+  }
+
+  /* And if a question still turns out taller than the card — a long sentence,
+     a word-field bank — the card scrolls rather than hide an option. */
+  .game-shell:not([data-phase="setup"]) .quiz-card {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
   }
 }
