@@ -117,9 +117,12 @@ test("listening batches drop clips that print the German or answer in German", a
       context,
     );
     assert.equal(response.status, 200);
-    // Only one clip of the four is usable, so the incomplete batch is refused
-    // and the client falls back to its reserves.
-    assert.deepEqual(await response.json(), { questions: [] });
+    // Three clips of the four are unusable and are dropped. The one that
+    // survives is still served: the batch was paid for, and refusing it whole
+    // only buys the same bill again on the client's retry.
+    const { questions } = await response.json();
+    assert.equal(questions.length, 1);
+    assert.equal(questions[0].audioText, validClip(3).audioText);
   });
 });
 
@@ -133,4 +136,103 @@ test("generation rejects a practice mode the game does not offer", async () => {
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), { questions: [] });
   });
+});
+
+// --- the question bank ------------------------------------------------------
+
+function writtenRequest(body, client) {
+  return new Request("http://localhost/api/questions/generate", {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-real-ip": client },
+    body: JSON.stringify({
+      level: "A2",
+      mode: "recognition",
+      lexicalTopic: "Alltag & Routinen",
+      grammarTopic: "Präsens",
+      count: 4,
+      exclude: [],
+      ...body,
+    }),
+  });
+}
+
+const validGap = (index) => ({
+  prompt: "Вставьте правильную немецкую форму.",
+  context: `Maria ___ jeden Morgen Kaffee Nummer ${index + 1}.`,
+  translation: `Мария пьёт кофе номер ${index + 1} каждое утро.`,
+  options: [
+    `trinkt${"x".repeat(index)}`,
+    `trinken${"x".repeat(index)}`,
+    `trinke${"x".repeat(index)}`,
+    `trinkst${"x".repeat(index)}`,
+  ],
+  correct: 0,
+  correctAnswer: `trinkt${"x".repeat(index)}`,
+  rule: "В Präsens для sie в единственном числе: trinkt.",
+});
+
+test("a second refill is served from the bank instead of being paid for again", async () => {
+  await withMockedUpstream(
+    "bank-hit",
+    () => Array.from({ length: 12 }, (_, index) => validGap(index)),
+    async (worker, prompts) => {
+      const topic = "Sport & Fitness";
+      const first = await invokeWorker(
+        worker,
+        writtenRequest({ lexicalTopic: topic }, "10.1.0.1"),
+        environment,
+        context,
+      );
+      const firstBody = await first.json();
+      assert.equal(first.status, 200);
+      assert.equal(firstBody.questions.length, 4);
+      assert.equal(prompts.length, 1, "the first refill has to generate");
+
+      // The player now excludes what they have just seen, exactly as the queue
+      // does between refills. The old cache keyed on that list and could never
+      // hit; the bank still holds eight unseen questions.
+      const seen = firstBody.questions.map(
+        (question) => `${question.prompt} ${question.context}`,
+      );
+      const second = await invokeWorker(
+        worker,
+        writtenRequest({ lexicalTopic: topic, exclude: seen }, "10.1.0.1"),
+        environment,
+        context,
+      );
+      const secondBody = await second.json();
+      assert.equal(second.status, 200);
+      assert.equal(secondBody.questions.length, 4);
+      assert.equal(prompts.length, 1, "the second refill must cost nothing");
+
+      const firstContexts = new Set(firstBody.questions.map((q) => q.context));
+      for (const question of secondBody.questions) {
+        assert.ok(
+          !firstContexts.has(question.context),
+          "a banked refill must not repeat what the player just answered",
+        );
+      }
+    },
+  );
+});
+
+test("a short batch is banked rather than thrown away", async () => {
+  await withMockedUpstream(
+    "bank-short",
+    () => Array.from({ length: 3 }, (_, index) => validGap(index)),
+    async (worker, prompts) => {
+      const response = await invokeWorker(
+        worker,
+        writtenRequest({ lexicalTopic: "Musik & Podcasts" }, "10.1.0.2"),
+        environment,
+        context,
+      );
+      const body = await response.json();
+      assert.equal(response.status, 200);
+      // Fewer than asked for, but paid for: the player gets them instead of an
+      // empty hand and a retry that pays all over again.
+      assert.equal(body.questions.length, 3);
+      assert.ok(prompts.length >= 1);
+    },
+  );
 });

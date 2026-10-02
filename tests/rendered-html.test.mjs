@@ -170,7 +170,7 @@ test("question pool mirrors the non-blocking Odyssey lifecycle", async () => {
   assert.match(questions, /options: \[string, string, string, string\]/);
 });
 
-test("AITunnel batches are accepted only when all eight questions validate", async () => {
+test("AITunnel batches are banked whole, short ones included", async () => {
   const originalFetch = globalThis.fetch;
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("aitunnel-mock-test", String(process.pid) + "-" + Date.now());
@@ -248,8 +248,34 @@ test("AITunnel batches are accepted only when all eight questions validate", asy
       context,
     );
     assert.equal(partialResponse.status, 200);
-    assert.deepEqual(await partialResponse.json(), { questions: [] });
-    assert.ok(upstreamCalls >= 3, "partial batches should trigger the compatible retry path");
+    // Seven of the eight asked for. They were paid for, so they are served and
+    // banked rather than discarded — throwing them away only bought the same
+    // bill again on the client's retry.
+    const partialPayload = await partialResponse.json();
+    assert.equal(partialPayload.questions.length, 7);
+    assert.ok(upstreamCalls >= 3, "a short batch still tries the compatible retry path");
+
+    // And the next refill on the same combination comes out of the bank: the
+    // surplus of the first call is kept instead of sliced off.
+    const callsBeforeReuse = upstreamCalls;
+    const reuseResponse = await invokeWorker(worker,
+      new Request("http://localhost/api/questions/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-real-ip": "test-partial" },
+        body: JSON.stringify({
+          level: "B1",
+          lexicalTopic: "Arbeit & Beruf",
+          grammarTopic: "Präsens",
+          count: 4,
+          exclude: [],
+        }),
+      }),
+      environment,
+      context,
+    );
+    assert.equal(reuseResponse.status, 200);
+    assert.equal((await reuseResponse.json()).questions.length, 4);
+    assert.equal(upstreamCalls, callsBeforeReuse, "a banked refill must cost nothing");
   } finally {
     globalThis.fetch = originalFetch;
   }

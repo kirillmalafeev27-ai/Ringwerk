@@ -15,7 +15,11 @@ const BATCH_SIZE = 8;
 const LOW_WATER_MARK = 3;
 const RECENT_LIMIT = 80;
 const SERVER_EXCLUDE_LIMIT = 60;
+// A provider that is down, rate-limited or out of credit answers just as fast
+// as a healthy one, so a fixed retry turns an outage into a steady drip of paid
+// attempts. Each failure waits longer; the first success resets it.
 const RETRY_DELAY_MS = 12_000;
+const RETRY_DELAY_CEILING_MS = 120_000;
 
 function shuffled(values: number[]) {
   const copy = [...values];
@@ -60,6 +64,7 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
   const inFlightRef = useRef<Promise<void> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const retryTimerRef = useRef<number | null>(null);
+  const retryDelayRef = useRef(RETRY_DELAY_MS);
   const refillRef = useRef<() => Promise<void> | void>(() => {});
   const enabledRef = useRef(enabled);
   const requestEpochRef = useRef(0);
@@ -124,6 +129,7 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
           accepted.push(normalized);
         }
         if (!accepted.length) return;
+        retryDelayRef.current = RETRY_DELAY_MS;
         queueRef.current.push(...accepted.sort(() => Math.random() - 0.5));
         setQueuedCount(queueRef.current.length);
       })
@@ -135,10 +141,12 @@ export function useQuestionPool(settings: LearningSettings, enabled = true) {
         if (!mountedRef.current || requestEpoch !== requestEpochRef.current || requestKey !== activeKeyRef.current) return;
         setIsRefilling(false);
         if (enabledRef.current && queueRef.current.length < LOW_WATER_MARK && !retryTimerRef.current) {
+          const delay = retryDelayRef.current;
+          retryDelayRef.current = Math.min(delay * 2, RETRY_DELAY_CEILING_MS);
           retryTimerRef.current = window.setTimeout(() => {
             retryTimerRef.current = null;
             void refillRef.current();
-          }, RETRY_DELAY_MS);
+          }, delay);
         }
       });
     inFlightRef.current = task;

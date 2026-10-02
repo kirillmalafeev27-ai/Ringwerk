@@ -43,8 +43,14 @@ const LEXICAL_TOPIC_SET = new Set<string>(LEXICAL_TOPICS);
 const GRAMMAR_TOPIC_SET = new Set<string>(GRAMMAR_TOPICS);
 const MODES = new Set<string>(QUESTION_MODES.map((entry) => entry.id));
 const MAX_RESPONSE_CHARACTERS = 1_500_000;
-const cache = new Map<string, { expiresAt: number; questions: GameQuestion[] }>();
-const pending = new Map<string, Promise<GameQuestion[]>>();
+// A bank of questions per learning combination rather than a cache of whole
+// responses. The old key included the player's exclude list, which changes with
+// every refill, so it could never hit and every refill was paid for afresh.
+const bank = new Map<string, { expiresAt: number; questions: GameQuestion[] }>();
+const pending = new Map<string, Promise<void>>();
+// One generation is asked for twice what a refill needs, so the surplus pays
+// for the refill after it. It used to be sliced off and thrown away.
+const GENERATION_BATCH = 16;
 const failureUntil = new Map<string, number>();
 let activeRequests = 0;
 const FORBIDDEN_VISIBLE_REFERENCE = /(?:\b(?:ai|openai|chatgpt|gpt|aitunnel)\b|нейросет\p{L}*|искусственн\p{L}*\s+интеллект\p{L}*)/iu;
@@ -156,8 +162,8 @@ function configuration() {
     baseUrl = "";
   }
   const rawModels = usesTunnel
-    ? environment.AI_MODELS ?? environment.AITUNNEL_MODELS ?? environment.AI_MODEL ?? environment.AITUNNEL_MODEL ?? "gpt-5.4"
-    : environment.AI_MODELS ?? environment.OPENAI_MODELS ?? environment.AI_MODEL ?? environment.OPENAI_MODEL ?? "gpt-5.4";
+    ? environment.AI_MODELS ?? environment.AITUNNEL_MODELS ?? environment.AI_MODEL ?? environment.AITUNNEL_MODEL ?? "gpt-6-sol"
+    : environment.AI_MODELS ?? environment.OPENAI_MODELS ?? environment.AI_MODEL ?? environment.OPENAI_MODEL ?? "gpt-6-sol";
   const models = String(rawModels).split(",").map((model) => compactText(model, 100)).filter(Boolean).slice(0, 4);
   return {
     key,
@@ -166,6 +172,9 @@ function configuration() {
     timeoutMs: boundedInteger(environment.QUESTION_GENERATION_TIMEOUT_MS, 45_000, 3_000, 90_000),
     cacheTtlMs: boundedInteger(environment.QUESTION_CACHE_TTL_MS, 30 * 60_000, 30_000, 24 * 60 * 60_000),
     cacheLimit: boundedInteger(environment.QUESTION_CACHE_LIMIT, 96, 8, 256),
+    // How many questions one learning combination may hold before the oldest
+    // are dropped.
+    bankLimit: boundedInteger(environment.QUESTION_BANK_LIMIT, 60, 12, 400),
     failureCooldownMs: boundedInteger(environment.QUESTION_FAILURE_COOLDOWN_MS, 15_000, 1_000, 120_000),
     concurrency: boundedInteger(environment.QUESTION_GENERATION_CONCURRENCY, 4, 1, 12),
   };
@@ -525,15 +534,67 @@ function parseResponse(raw: string, spec: QuestionSpec) {
   return questions;
 }
 
-function cacheKey(spec: QuestionSpec) {
+function bankKey(spec: QuestionSpec) {
   return JSON.stringify({
     level: spec.level,
     mode: spec.mode,
     lexicalTopic: spec.lexicalTopic,
-    grammarTopic: spec.grammarTopic,
-    count: spec.count,
-    exclude: [...spec.exclude].sort(),
+    // Listening is not written for a grammar topic, so all of its runs draw on
+    // one bank instead of one per topic.
+    grammarTopic: spec.mode === "audio" ? "" : spec.grammarTopic,
   });
+}
+
+function excludedKeys(exclude: readonly string[]) {
+  return new Set(exclude.map((text) => text.normalize("NFKC").toLocaleLowerCase("de-DE")));
+}
+
+function isUnseen(question: GameQuestion, excluded: Set<string>) {
+  const label = questionHistoryLabel(question).normalize("NFKC").toLocaleLowerCase("de-DE");
+  const context = (question.audioText ?? question.context).normalize("NFKC").toLocaleLowerCase("de-DE");
+  return !excluded.has(label) && !excluded.has(context);
+}
+
+/** Serves what the bank already holds that this player has not seen. */
+function takeFromBank(key: string, spec: QuestionSpec, now: number) {
+  const entry = bank.get(key);
+  if (!entry) return [];
+  if (entry.expiresAt <= now) {
+    bank.delete(key);
+    return [];
+  }
+  const excluded = excludedKeys(spec.exclude);
+  const picked: GameQuestion[] = [];
+  for (const question of entry.questions) {
+    if (!isUnseen(question, excluded)) continue;
+    picked.push(question);
+    if (picked.length === spec.count) break;
+  }
+  return picked;
+}
+
+function addToBank(
+  key: string,
+  questions: GameQuestion[],
+  limits: { cacheTtlMs: number; cacheLimit: number; bankLimit: number },
+) {
+  if (!questions.length) return;
+  const entry = bank.get(key) ?? { expiresAt: 0, questions: [] };
+  const seen = new Set(entry.questions.map(questionFingerprint));
+  for (const question of questions) {
+    const fingerprint = questionFingerprint(question);
+    if (seen.has(fingerprint)) continue;
+    seen.add(fingerprint);
+    entry.questions.push(question);
+  }
+  if (entry.questions.length > limits.bankLimit) {
+    entry.questions.splice(0, entry.questions.length - limits.bankLimit);
+  }
+  entry.expiresAt = Date.now() + limits.cacheTtlMs;
+  bank.set(key, entry);
+  // Re-inserting moves the key to the end, so the oldest combination is the one
+  // that goes when the bank is full.
+  while (bank.size > limits.cacheLimit) bank.delete(bank.keys().next().value!);
 }
 
 function cloneQuestions(questions: GameQuestion[]) {
@@ -583,7 +644,7 @@ async function requestBatch(model: string, spec: QuestionSpec, useStructuredOutp
       headers: { Authorization: `Bearer ${config.key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        max_tokens: Math.max(1400, Math.min(6000, spec.count * 420)),
+        max_tokens: Math.max(1400, Math.min(7000, spec.count * 420)),
         temperature: 0.82,
         messages: buildMessages(spec),
         ...(useStructuredOutput ? { response_format: { type: "json_object" } } : {}),
@@ -600,7 +661,7 @@ async function requestBatch(model: string, spec: QuestionSpec, useStructuredOutp
   }
 }
 
-async function generateFresh(spec: QuestionSpec) {
+async function generateFresh(spec: QuestionSpec, target: number) {
   const config = configuration();
   const deadline = Date.now() + config.timeoutMs;
   const collected: GameQuestion[] = [];
@@ -618,49 +679,63 @@ async function generateFresh(spec: QuestionSpec) {
           seen.add(fingerprint);
           collected.push(question);
         }
-        if (collected.length >= spec.count) return collected.slice(0, spec.count);
+        if (collected.length >= target) return collected;
       } catch {
         // A compatible retry/model may still return a valid batch.
       }
     }
   }
-  return collected.slice(0, spec.count);
+  // Short batches are banked rather than discarded: they were paid for, and the
+  // next refill can finish the job.
+  return collected;
 }
 
 export async function generateQuestions(input: unknown) {
   const spec = normalizeRequest(input);
   const config = configuration();
   if (!isQuestionGenerationReady()) return [];
-  const key = cacheKey(spec);
+  const key = bankKey(spec);
   const now = Date.now();
   pruneFailureCooldowns(now, Math.max(64, config.cacheLimit * 2));
-  const cached = cache.get(key);
-  if (cached && cached.expiresAt > now) return cloneQuestions(cached.questions);
-  if (cached) cache.delete(key);
-  if ((failureUntil.get(key) ?? 0) > now) return [];
-  if (pending.has(key)) return cloneQuestions(await pending.get(key)!);
-  if (activeRequests >= config.concurrency) return [];
 
+  // Whatever the bank already holds for this combination costs nothing.
+  const ready = takeFromBank(key, spec, now);
+  // A partial hand out of the bank beats paying to top it up: the queue simply
+  // asks again a little sooner, and that ask is free too until the bank runs
+  // dry.
+  if (ready.length >= Math.ceil(spec.count / 2)) return cloneQuestions(ready);
+  // Serving a short hand beats serving none: the player keeps playing and the
+  // queue asks again later instead of the provider being hit twice over.
+  if ((failureUntil.get(key) ?? 0) > now) return cloneQuestions(ready);
+  if (pending.has(key)) {
+    await pending.get(key)!.catch(() => {});
+    return cloneQuestions(takeFromBank(key, spec, Date.now()));
+  }
+  if (activeRequests >= config.concurrency) return cloneQuestions(ready);
+
+  const limits = {
+    cacheTtlMs: config.cacheTtlMs,
+    cacheLimit: config.cacheLimit,
+    bankLimit: config.bankLimit,
+  };
   activeRequests += 1;
-  const task = generateFresh(spec)
+  const task = generateFresh({ ...spec, count: Math.max(spec.count, GENERATION_BATCH) }, spec.count)
     .then((questions) => {
-      if (questions.length === spec.count) {
-        cache.set(key, { expiresAt: Date.now() + config.cacheTtlMs, questions: cloneQuestions(questions) });
+      if (questions.length) {
+        addToBank(key, questions, limits);
         failureUntil.delete(key);
-        while (cache.size > config.cacheLimit) cache.delete(cache.keys().next().value!);
-        return questions;
+      } else {
+        failureUntil.set(key, Date.now() + config.failureCooldownMs);
       }
-      failureUntil.set(key, Date.now() + config.failureCooldownMs);
-      return [];
     })
     .catch(() => {
       failureUntil.set(key, Date.now() + config.failureCooldownMs);
-      return [];
     })
     .finally(() => {
       activeRequests = Math.max(0, activeRequests - 1);
       pending.delete(key);
     });
   pending.set(key, task);
-  return cloneQuestions(await task);
+  await task;
+  return cloneQuestions(takeFromBank(key, spec, Date.now()));
 }
