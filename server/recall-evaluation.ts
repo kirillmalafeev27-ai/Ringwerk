@@ -1,6 +1,6 @@
 import { getRuntimeEnvironment } from "@/server/runtime-env";
 
-const DEFAULT_MODEL = "gpt-6-sol";
+const DEFAULT_MODEL = "gpt-5.4";
 const DEFAULT_TIMEOUT_MS = 8_000;
 const MAX_RESPONSE_CHARACTERS = 64_000;
 
