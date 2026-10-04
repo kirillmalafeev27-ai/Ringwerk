@@ -171,9 +171,9 @@ const validGap = (index) => ({
   rule: "В Präsens для sie в единственном числе: trinkt.",
 });
 
-test("a second refill is served from the bank instead of being paid for again", async () => {
+test("a second refill is served from the pool instead of being paid for again", async () => {
   await withMockedUpstream(
-    "bank-hit",
+    "pool-hit",
     () => Array.from({ length: 12 }, (_, index) => validGap(index)),
     async (worker, prompts) => {
       const topic = "Sport & Fitness";
@@ -188,9 +188,9 @@ test("a second refill is served from the bank instead of being paid for again", 
       assert.equal(firstBody.questions.length, 4);
       assert.equal(prompts.length, 1, "the first refill has to generate");
 
-      // The player now excludes what they have just seen, exactly as the queue
-      // does between refills. The old cache keyed on that list and could never
-      // hit; the bank still holds eight unseen questions.
+      // The old cache keyed on the exclude list, which changes between refills,
+      // so it could never hit. The pool keys on the combination alone and is
+      // emptied as it is served, so what is left over is still unseen.
       const seen = firstBody.questions.map(
         (question) => `${question.prompt} ${question.context}`,
       );
@@ -203,22 +203,22 @@ test("a second refill is served from the bank instead of being paid for again", 
       const secondBody = await second.json();
       assert.equal(second.status, 200);
       assert.equal(secondBody.questions.length, 4);
-      assert.equal(prompts.length, 1, "the second refill must cost nothing");
+      assert.equal(prompts.length, 1, "a refill the pool covers whole costs nothing");
 
       const firstContexts = new Set(firstBody.questions.map((q) => q.context));
       for (const question of secondBody.questions) {
         assert.ok(
           !firstContexts.has(question.context),
-          "a banked refill must not repeat what the player just answered",
+          "a pooled refill must not repeat what the player just answered",
         );
       }
     },
   );
 });
 
-test("a short batch is banked rather than thrown away", async () => {
+test("a short batch is served rather than thrown away", async () => {
   await withMockedUpstream(
-    "bank-short",
+    "pool-short",
     () => Array.from({ length: 3 }, (_, index) => validGap(index)),
     async (worker, prompts) => {
       const response = await invokeWorker(

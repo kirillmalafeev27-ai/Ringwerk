@@ -170,7 +170,7 @@ test("question pool mirrors the non-blocking Odyssey lifecycle", async () => {
   assert.match(questions, /options: \[string, string, string, string\]/);
 });
 
-test("AITunnel batches are banked whole, short ones included", async () => {
+test("AITunnel batches keep their surplus and serve short ones", async () => {
   const originalFetch = globalThis.fetch;
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("aitunnel-mock-test", String(process.pid) + "-" + Date.now());
@@ -255,16 +255,36 @@ test("AITunnel batches are banked whole, short ones included", async () => {
     assert.equal(partialPayload.questions.length, 7);
     assert.ok(upstreamCalls >= 3, "a short batch still tries the compatible retry path");
 
-    // And the next refill on the same combination comes out of the bank: the
-    // surplus of the first call is kept instead of sliced off.
+    // A generation asks for ten even when the refill needs six, so four are
+    // left over — and the next refill the pool can cover whole costs nothing.
+    batchSize = 12;
+    const surplusResponse = await invokeWorker(worker,
+      new Request("http://localhost/api/questions/generate", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-real-ip": "test-surplus" },
+        body: JSON.stringify({
+          level: "B2",
+          lexicalTopic: "Musik & Podcasts",
+          grammarTopic: "Präsens",
+          count: 6,
+          exclude: [],
+        }),
+      }),
+      environment,
+      context,
+    );
+    assert.equal(surplusResponse.status, 200);
+    const surplusPayload = await surplusResponse.json();
+    assert.equal(surplusPayload.questions.length, 6);
+
     const callsBeforeReuse = upstreamCalls;
     const reuseResponse = await invokeWorker(worker,
       new Request("http://localhost/api/questions/generate", {
         method: "POST",
-        headers: { "content-type": "application/json", "x-real-ip": "test-partial" },
+        headers: { "content-type": "application/json", "x-real-ip": "test-surplus" },
         body: JSON.stringify({
-          level: "B1",
-          lexicalTopic: "Arbeit & Beruf",
+          level: "B2",
+          lexicalTopic: "Musik & Podcasts",
           grammarTopic: "Präsens",
           count: 4,
           exclude: [],
@@ -274,8 +294,13 @@ test("AITunnel batches are banked whole, short ones included", async () => {
       context,
     );
     assert.equal(reuseResponse.status, 200);
-    assert.equal((await reuseResponse.json()).questions.length, 4);
-    assert.equal(upstreamCalls, callsBeforeReuse, "a banked refill must cost nothing");
+    const reusePayload = await reuseResponse.json();
+    assert.equal(reusePayload.questions.length, 4);
+    assert.equal(upstreamCalls, callsBeforeReuse, "a pooled refill must cost nothing");
+    const served = new Set(surplusPayload.questions.map((question) => question.context));
+    for (const question of reusePayload.questions) {
+      assert.ok(!served.has(question.context), "a pooled refill must not repeat");
+    }
   } finally {
     globalThis.fetch = originalFetch;
   }
